@@ -1,0 +1,182 @@
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
+import type { Conversation, Message, MemoryItem, Citation } from '@/types'
+import * as api from '@/services/api'
+
+export const useChatStore = defineStore('chat', () => {
+  const conversations = ref<Conversation[]>([])
+  const currentConvId = ref<string | null>(null)
+  const messages = ref<Message[]>([])
+  const memories = ref<MemoryItem[]>([])
+  const isLoading = ref(false)
+  const searchQuery = ref('')
+  const enableSearch = ref(true)
+  const showMemoryPanel = ref(false)
+
+  const currentConversation = computed(() =>
+    conversations.value.find(c => c.id === currentConvId.value) ?? null
+  )
+
+  const filteredConversations = computed(() => {
+    if (!searchQuery.value) return conversations.value
+    const q = searchQuery.value.toLowerCase()
+    return conversations.value.filter(c => c.title.toLowerCase().includes(q))
+  })
+
+  async function loadConversations() {
+    conversations.value = await api.listConversations()
+  }
+
+  async function selectConversation(id: string) {
+    if (id === currentConvId.value) return
+    currentConvId.value = id
+    messages.value = await api.getMessages(id)
+  }
+
+  async function newConversation() {
+    currentConvId.value = null
+    messages.value = []
+  }
+
+  async function deleteConversation(id: string) {
+    await api.deleteConversation(id)
+    conversations.value = conversations.value.filter(c => c.id !== id)
+    if (currentConvId.value === id) {
+      currentConvId.value = null
+      messages.value = []
+    }
+  }
+
+  async function renameConversation(id: string, title: string) {
+    await api.updateConversationTitle(id, title)
+    const conv = conversations.value.find(c => c.id === id)
+    if (conv) conv.title = title
+  }
+
+  async function sendMessage(content: string, images?: string[]) {
+    if (!content.trim() && !images?.length) return
+    if (isLoading.value) return
+
+    isLoading.value = true
+
+    // 添加用户消息（临时），images 深拷贝防止外部引用被清空
+    const userMsg: Message = {
+      id: `tmp-user-${Date.now()}`,
+      conversation_id: currentConvId.value ?? '',
+      role: 'user',
+      content,
+      images: images?.length ? [...images] : undefined,
+      created_at: new Date().toISOString(),
+    }
+    messages.value.push(userMsg)
+
+    // 添加 AI 消息占位
+    const aiMsg: Message = {
+      id: `tmp-ai-${Date.now()}`,
+      conversation_id: currentConvId.value ?? '',
+      role: 'assistant',
+      content: '',
+      citations: null,
+      created_at: new Date().toISOString(),
+      streaming: true,
+      searching: false,
+    }
+    messages.value.push(aiMsg)
+    // 通过响应式数组索引操作，确保 Vue 能追踪变更
+    const aiIdx = messages.value.length - 1
+    const userIdx = messages.value.length - 2
+
+    const abortController = new AbortController()
+
+    try {
+      await api.sendMessage(
+        content,
+        currentConvId.value,
+        enableSearch.value,
+        {
+          onConvId(convId) {
+            messages.value[aiIdx].conversation_id = convId
+            messages.value[userIdx].conversation_id = convId
+            if (!currentConvId.value) {
+              currentConvId.value = convId
+              const newConv: Conversation = {
+                id: convId,
+                title: content.slice(0, 30),
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              }
+              conversations.value.unshift(newConv)
+            }
+          },
+          onToken(token) {
+            messages.value[aiIdx].content += token
+            messages.value[aiIdx].searching = false
+          },
+          onSearching(query) {
+            messages.value[aiIdx].searching = true
+            messages.value[aiIdx].searchQuery = query
+          },
+          onSearchResults(_results) {
+            messages.value[aiIdx].searching = false
+          },
+          onDone(citations) {
+            messages.value[aiIdx].citations = citations.length > 0 ? citations : null
+            messages.value[aiIdx].streaming = false
+            messages.value[aiIdx].searching = false
+            isLoading.value = false
+            // 只更新当前对话标题，不整体刷新列表（避免触发 selectConversation 副作用）
+            const conv = conversations.value.find(c => c.id === currentConvId.value)
+            if (conv && content) {
+              conv.title = content.slice(0, 30)
+            }
+          },
+          onError(message) {
+            messages.value[aiIdx].content = `❌ 出错了：${message}`
+            messages.value[aiIdx].streaming = false
+            messages.value[aiIdx].searching = false
+            isLoading.value = false
+          },
+        },
+        abortController.signal,
+        images
+      )
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') {
+        messages.value[aiIdx].content = `❌ 请求失败：${e?.message ?? '未知错误'}`
+      }
+      messages.value[aiIdx].streaming = false
+      messages.value[aiIdx].searching = false
+      isLoading.value = false
+    }
+  }
+
+  async function loadMemories() {
+    memories.value = await api.getMemories()
+  }
+
+  async function deleteMemory(id: string) {
+    await api.deleteMemory(id)
+    memories.value = memories.value.filter(m => m.id !== id)
+  }
+
+  return {
+    conversations,
+    currentConvId,
+    messages,
+    memories,
+    isLoading,
+    searchQuery,
+    enableSearch,
+    showMemoryPanel,
+    currentConversation,
+    filteredConversations,
+    loadConversations,
+    selectConversation,
+    newConversation,
+    deleteConversation,
+    renameConversation,
+    sendMessage,
+    loadMemories,
+    deleteMemory,
+  }
+})
