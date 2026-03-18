@@ -23,6 +23,10 @@ class Settings(BaseSettings):
 
     tavily_api_key: str = ""
 
+    feishu_app_id: str = ""
+    feishu_app_secret: str = ""
+    feishu_default_open_id: str = ""   # 填入后即可发消息给自己
+
     user_id: str = "default_user"
 
     db_path: str = "data/chat.db"

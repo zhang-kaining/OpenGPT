@@ -23,8 +23,7 @@
         class="input-textarea"
         placeholder="给 ChatGPT 发送消息"
         rows="1"
-        @keydown.enter.exact.prevent="handleSend"
-        @keydown.enter.shift.exact="() => {}"
+        @keydown="handleKeydown"
         @input="autoResize"
         @focus="isFocused = true"
         @blur="isFocused = false"
@@ -102,6 +101,14 @@ function autoResize() {
   if (!el) return
   el.style.height = 'auto'
   el.style.height = Math.min(el.scrollHeight, 200) + 'px'
+}
+
+function handleKeydown(e: KeyboardEvent) {
+  if (e.key !== 'Enter') return
+  if (e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return
+  if (e.isComposing || (e as KeyboardEvent & { keyCode?: number }).keyCode === 229) return
+  e.preventDefault()
+  void handleSend()
 }
 
 async function handleSend() {

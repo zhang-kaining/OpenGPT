@@ -1,3 +1,53 @@
+# =========================
+# Env / secrets
+# =========================
 backend/.env
-backend/.venv/*
-backend/.venv/lib/python3.12/site-packages/_yaml/__init__.py
+.env
+.env.*
+!.env.example
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+backend/.venv/
+
+# =========================
+# Runtime / logs / temp
+# =========================
+.pids
+logs/
+*.log
+*.pid
+
+# Databases / local runtime data
+*.db
+*.sqlite
+*.sqlite3
+backend/data/*.db
+
+# =========================
+# Frontend build artifacts
+# =========================
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.cache/
+
+# =========================
+# Editor / OS
+# =========================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

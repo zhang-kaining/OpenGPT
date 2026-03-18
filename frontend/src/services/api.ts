@@ -58,6 +58,7 @@ export interface ChatCallbacks {
   onToken?: (token: string) => void
   onSearching?: (query: string) => void
   onSearchResults?: (results: Citation[]) => void
+  onToolCall?: (name: string, status: string) => void
   onDone?: (citations: Citation[]) => void
   onError?: (message: string) => void
 }
@@ -119,6 +120,9 @@ export async function sendMessage(
             break
           case 'search_results':
             callbacks.onSearchResults?.(event.results)
+            break
+          case 'tool_call':
+            callbacks.onToolCall?.(event.name, event.status)
             break
           case 'done':
             callbacks.onDone?.(event.citations ?? [])

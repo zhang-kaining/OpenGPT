@@ -18,6 +18,7 @@ export interface Message {
   streaming?: boolean
   searching?: boolean
   searchQuery?: string
+  toolCall?: string    // 正在执行的工具名称提示
 }
 
 export interface Conversation {

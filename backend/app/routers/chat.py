@@ -1,3 +1,4 @@
+import asyncio
 import json
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -65,8 +66,11 @@ async def chat(body: MessageCreate):
 
         async for event in oai_service.stream_chat(messages, memories, body.enable_search):
             if event["type"] == "token":
-                full_response += event["content"]
-                yield sse(json.dumps(event, ensure_ascii=False))
+                # 逐字拆分，产生打字机效果
+                for char in event["content"]:
+                    full_response += char
+                    yield sse(json.dumps({"type": "token", "content": char}, ensure_ascii=False))
+                    await asyncio.sleep(0.015)
             elif event["type"] in ("searching", "search_results"):
                 yield sse(json.dumps(event, ensure_ascii=False))
             elif event["type"] == "done":

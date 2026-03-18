@@ -111,12 +111,20 @@ export const useChatStore = defineStore('chat', () => {
           onToken(token) {
             messages.value[aiIdx].content += token
             messages.value[aiIdx].searching = false
+            messages.value[aiIdx].toolCall = undefined
           },
           onSearching(query) {
             messages.value[aiIdx].searching = true
             messages.value[aiIdx].searchQuery = query
           },
           onSearchResults(_results) {
+            messages.value[aiIdx].searching = false
+          },
+          onToolCall(name, _status) {
+            const labels: Record<string, string> = {
+              feishu_send_message: '正在发送到飞书...',
+            }
+            messages.value[aiIdx].toolCall = labels[name] ?? '正在调用工具...'
             messages.value[aiIdx].searching = false
           },
           onDone(citations) {

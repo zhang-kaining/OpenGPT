@@ -1,19 +1,19 @@
 import json
 import asyncio
-from openai import AzureOpenAI
+from openai import AsyncAzureOpenAI
 from app.config import get_settings
 from app.services import web_search as search_service
+from app.services import feishu as feishu_service
 
 settings = get_settings()
 
-_client: AzureOpenAI | None = None
-_SENTINEL = object()
+_client: AsyncAzureOpenAI | None = None
 
 
-def get_client() -> AzureOpenAI:
+def get_client() -> AsyncAzureOpenAI:
     global _client
     if _client is None:
-        _client = AzureOpenAI(
+        _client = AsyncAzureOpenAI(
             api_key=settings.azure_openai_api_key,
             azure_endpoint=settings.azure_openai_endpoint,
             api_version=settings.azure_openai_api_version,
@@ -33,14 +33,28 @@ def build_system_prompt(memories: list[dict]) -> str:
     return base
 
 
-def _sync_stream_to_queue(
-    queue: asyncio.Queue,
-    loop: asyncio.AbstractEventLoop,
-    full_messages: list[dict],
-    tools: list | None,
+async def stream_chat(
+    messages: list[dict],
+    memories: list[dict],
+    enable_search: bool = True,
 ):
-    """在线程池中运行同步流式调用，把事件放入队列"""
+    """
+    异步生成器，yield SSE 事件字典：
+    - {"type": "token", "content": "..."}
+    - {"type": "searching", "query": "..."}
+    - {"type": "search_results", "results": [...]}
+    - {"type": "done", "citations": [...]}
+    - {"type": "error", "message": "..."}
+    """
     client = get_client()
+    system_prompt = build_system_prompt(memories)
+    full_messages = [{"role": "system", "content": system_prompt}] + messages
+    tools: list = []
+    if enable_search and settings.tavily_api_key:
+        tools.append(search_service.TOOL_DEFINITION)
+    if settings.feishu_app_id and settings.feishu_app_secret:
+        tools.append(feishu_service.TOOL_DEFINITION)
+    tools = tools or None
     all_citations: list[dict] = []
 
     try:
@@ -54,13 +68,13 @@ def _sync_stream_to_queue(
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = "auto"
 
-            response = client.chat.completions.create(**kwargs)
+            response = await client.chat.completions.create(**kwargs)
 
             collected_content = ""
             collected_tool_calls: dict[int, dict] = {}
             finish_reason = None
 
-            for chunk in response:
+            async for chunk in response:
                 if not chunk.choices:
                     continue
                 choice = chunk.choices[0]
@@ -68,10 +82,7 @@ def _sync_stream_to_queue(
 
                 if choice.delta.content:
                     collected_content += choice.delta.content
-                    asyncio.run_coroutine_threadsafe(
-                        queue.put({"type": "token", "content": choice.delta.content}),
-                        loop,
-                    ).result()
+                    yield {"type": "token", "content": choice.delta.content}
 
                 if choice.delta.tool_calls:
                     for tc in choice.delta.tool_calls:
@@ -108,25 +119,47 @@ def _sync_stream_to_queue(
                 })
 
                 for tc in collected_tool_calls.values():
-                    if tc["function"]["name"] == "web_search":
+                    fn_name = tc["function"]["name"]
+
+                    if fn_name == "web_search":
                         try:
                             args = json.loads(tc["function"]["arguments"])
                             query = args.get("query", "")
                         except Exception:
                             query = ""
 
-                        asyncio.run_coroutine_threadsafe(
-                            queue.put({"type": "searching", "query": query}), loop
-                        ).result()
+                        yield {"type": "searching", "query": query}
 
-                        results = search_service.search(query)
+                        results = await asyncio.get_event_loop().run_in_executor(
+                            None, search_service.search, query
+                        )
                         all_citations.extend(results)
 
-                        asyncio.run_coroutine_threadsafe(
-                            queue.put({"type": "search_results", "results": results}), loop
-                        ).result()
+                        yield {"type": "search_results", "results": results}
 
                         tool_content = _format_search_results(results)
+                        full_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": tool_content,
+                        })
+
+                    elif fn_name == "feishu_send_message":
+                        try:
+                            args = json.loads(tc["function"]["arguments"])
+                            content = args.get("content", "")
+                        except Exception:
+                            content = ""
+
+                        yield {"type": "tool_call", "name": "feishu_send_message", "status": "sending"}
+
+                        result = await feishu_service.send_message(content)
+
+                        if result["success"]:
+                            tool_content = "消息已成功发送到飞书。"
+                        else:
+                            tool_content = f"发送失败：{result.get('error', '未知错误')}"
+
                         full_messages.append({
                             "role": "tool",
                             "tool_call_id": tc["id"],
@@ -136,56 +169,10 @@ def _sync_stream_to_queue(
 
             break
 
-        asyncio.run_coroutine_threadsafe(
-            queue.put({"type": "done", "citations": all_citations}), loop
-        ).result()
+        yield {"type": "done", "citations": all_citations}
 
     except Exception as e:
-        asyncio.run_coroutine_threadsafe(
-            queue.put({"type": "error", "message": str(e)}), loop
-        ).result()
-    finally:
-        asyncio.run_coroutine_threadsafe(queue.put(_SENTINEL), loop).result()
-
-
-async def stream_chat(
-    messages: list[dict],
-    memories: list[dict],
-    enable_search: bool = True,
-):
-    """
-    异步生成器，yield SSE 事件字典：
-    - {"type": "token", "content": "..."}
-    - {"type": "searching", "query": "..."}
-    - {"type": "search_results", "results": [...]}
-    - {"type": "done", "citations": [...]}
-    - {"type": "error", "message": "..."}
-    """
-    system_prompt = build_system_prompt(memories)
-    full_messages = [{"role": "system", "content": system_prompt}] + messages
-    tools = [search_service.TOOL_DEFINITION] if enable_search and settings.tavily_api_key else None
-
-    loop = asyncio.get_event_loop()
-    queue: asyncio.Queue = asyncio.Queue()
-
-    # 在线程池中运行同步 Azure SDK 调用
-    future = loop.run_in_executor(
-        None,
-        _sync_stream_to_queue,
-        queue,
-        loop,
-        full_messages,
-        tools,
-    )
-
-    while True:
-        item = await queue.get()
-        if item is _SENTINEL:
-            break
-        yield item
-
-    # 确保线程任务完成，传播异常
-    await future
+        yield {"type": "error", "message": str(e)}
 
 
 def _format_search_results(results: list[dict]) -> str:

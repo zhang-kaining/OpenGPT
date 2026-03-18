@@ -14,6 +14,10 @@
             <div class="search-spinner"><span></span></div>
             <span class="search-text">正在搜索{{ message.searchQuery ? '：' + message.searchQuery : '...' }}</span>
           </div>
+          <div v-if="message.toolCall && !message.searching" class="searching-indicator tool-call-indicator">
+            <div class="search-spinner"><span></span></div>
+            <span class="search-text">{{ message.toolCall }}</span>
+          </div>
 
           <div
             v-if="message.content"
@@ -225,6 +229,11 @@ function openImage(src: string) {
   background: rgba(255,255,255,0.04);
   border-radius: 20px;
   border: 1px solid rgba(255,255,255,0.08);
+}
+.tool-call-indicator {
+  background: rgba(0, 168, 112, 0.08);
+  border-color: rgba(0, 168, 112, 0.2);
+  color: #19c37d;
 }
 
 /* 搜索中：三个跳动小球 */
