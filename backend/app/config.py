@@ -23,6 +23,15 @@ class Settings(BaseSettings):
 
     tavily_api_key: str = ""
 
+    # Embedding provider: "azure" | "dashscope" | "zhipu" | "ollama"
+    embedding_provider: str = "azure"
+    # 阿里云百炼 / 智谱 / 其他兼容 OpenAI 的 embedding key
+    embedding_api_key: str = ""
+    # dashscope base_url（默认已内置，可留空）
+    embedding_base_url: str = ""
+    # embedding 模型名，各 provider 默认值见 memory.py
+    embedding_model: str = ""
+
     feishu_app_id: str = ""
     feishu_app_secret: str = ""
     feishu_default_open_id: str = ""   # 填入后即可发消息给自己

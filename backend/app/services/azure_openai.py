@@ -1,10 +1,29 @@
-import json
-import asyncio
-from openai import AsyncAzureOpenAI
-from app.config import get_settings
-from app.services import web_search as search_service
-from app.services import feishu as feishu_service
+"""
+Azure OpenAI 流式对话核心
+=========================
+工具调度优先级：
+  1. 内置工具（web_search、feishu_send_message）
+  2. Skill tool.py 注册的工具
+  3. MCP 工具
+  4. get_skill_detail（按需加载 Skill 详细指令）
+"""
 
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from typing import AsyncGenerator
+
+from openai import AsyncAzureOpenAI
+
+from app.config import get_settings
+from app.services import feishu as feishu_service
+from app.services import web_search as search_service
+from app.services.mcp_manager import get_mcp_manager
+from app.services.skill_manager import get_skill_manager
+
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 _client: AsyncAzureOpenAI | None = None
@@ -22,43 +41,78 @@ def get_client() -> AsyncAzureOpenAI:
 
 
 def build_system_prompt(memories: list[dict]) -> str:
+    skill_mgr = get_skill_manager()
     base = (
-        "你是一个智能助手，能够帮助用户解答问题、分析信息、进行网页搜索获取最新资讯。\n"
+        "你是一个智能助手，能够帮助用户解答问题、分析信息、使用各种工具完成任务。\n"
         "回答时请使用 Markdown 格式，代码使用代码块，重要内容加粗。\n"
         "当你使用网页搜索结果时，请在回答中用 [数字] 标注引用来源，例如 [1]、[2]。\n"
     )
     if memories:
         mem_text = "\n".join(f"- {m['memory']}" for m in memories)
         base += f"\n关于用户的记忆信息（请在回答时参考）：\n{mem_text}\n"
+
+    # 注入技能摘要（轻量，只有 name + description）
+    skill_summary = skill_mgr.get_summary_prompt()
+    if skill_summary:
+        base += skill_summary
+
     return base
+
+
+def _build_initial_tools(enable_search: bool) -> list[dict]:
+    """构建初始工具列表（每次对话开始时）"""
+    skill_mgr = get_skill_manager()
+    mcp_mgr = get_mcp_manager()
+    tools: list[dict] = []
+
+    # 内置工具：网络搜索
+    if enable_search and settings.tavily_api_key:
+        tools.append(search_service.TOOL_DEFINITION)
+
+    # 内置工具：飞书
+    if settings.feishu_app_id and settings.feishu_app_secret:
+        tools.append(feishu_service.TOOL_DEFINITION)
+
+    # Skill tool.py 工具（直接注册，无需 get_skill_detail）
+    tools.extend(skill_mgr.get_all_tool_definitions())
+
+    # MCP 工具
+    if mcp_mgr.available:
+        tools.extend(mcp_mgr.tool_definitions)
+
+    # get_skill_detail（当存在无 tool.py 的纯指令 Skill 时注册）
+    pure_skills = [s for s in skill_mgr.enabled_skills if not s.tools]
+    if pure_skills:
+        tools.append(skill_mgr.get_skill_detail_definition)
+
+    return tools or []
 
 
 async def stream_chat(
     messages: list[dict],
     memories: list[dict],
     enable_search: bool = True,
-):
+) -> AsyncGenerator[dict, None]:
     """
     异步生成器，yield SSE 事件字典：
-    - {"type": "token", "content": "..."}
-    - {"type": "searching", "query": "..."}
+    - {"type": "token",          "content": "..."}
+    - {"type": "searching",      "query": "..."}
     - {"type": "search_results", "results": [...]}
-    - {"type": "done", "citations": [...]}
-    - {"type": "error", "message": "..."}
+    - {"type": "tool_call",      "name": "...", "status": "..."}
+    - {"type": "done",           "citations": [...]}
+    - {"type": "error",          "message": "..."}
     """
     client = get_client()
     system_prompt = build_system_prompt(memories)
     full_messages = [{"role": "system", "content": system_prompt}] + messages
-    tools: list = []
-    if enable_search and settings.tavily_api_key:
-        tools.append(search_service.TOOL_DEFINITION)
-    if settings.feishu_app_id and settings.feishu_app_secret:
-        tools.append(feishu_service.TOOL_DEFINITION)
-    tools = tools or None
+
+    # tools 在循环内可动态追加（get_skill_detail 触发后追加该 Skill 的工具）
+    tools = _build_initial_tools(enable_search)
     all_citations: list[dict] = []
 
     try:
-        for _ in range(3):
+        # 最多 6 轮工具调用（防止死循环）
+        for _round in range(6):
             kwargs: dict = dict(
                 model=settings.azure_openai_deployment,
                 messages=full_messages,
@@ -101,78 +155,152 @@ async def stream_chat(
                             if tc.function.arguments:
                                 collected_tool_calls[idx]["function"]["arguments"] += tc.function.arguments
 
-            if finish_reason == "tool_calls" and collected_tool_calls:
+            if finish_reason != "tool_calls" or not collected_tool_calls:
+                break
+
+            # 把 assistant 的工具调用意图追加到消息历史
+            full_messages.append({
+                "role": "assistant",
+                "content": collected_content or None,
+                "tool_calls": [
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tc["function"]["name"],
+                            "arguments": tc["function"]["arguments"],
+                        },
+                    }
+                    for tc in collected_tool_calls.values()
+                ],
+            })
+
+            # 并发执行所有工具调用
+            tool_results = await _dispatch_tools(
+                list(collected_tool_calls.values()),
+                tools,
+                all_citations,
+            )
+
+            for tc_id, tool_content, sse_events, new_tool_defs in tool_results:
+                # 推送 SSE 事件
+                for event in sse_events:
+                    yield event
+                # 追加工具结果到消息历史
                 full_messages.append({
-                    "role": "assistant",
-                    "content": collected_content or None,
-                    "tool_calls": [
-                        {
-                            "id": tc["id"],
-                            "type": "function",
-                            "function": {
-                                "name": tc["function"]["name"],
-                                "arguments": tc["function"]["arguments"],
-                            },
-                        }
-                        for tc in collected_tool_calls.values()
-                    ],
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "content": tool_content,
                 })
-
-                for tc in collected_tool_calls.values():
-                    fn_name = tc["function"]["name"]
-
-                    if fn_name == "web_search":
-                        try:
-                            args = json.loads(tc["function"]["arguments"])
-                            query = args.get("query", "")
-                        except Exception:
-                            query = ""
-
-                        yield {"type": "searching", "query": query}
-
-                        results = await asyncio.get_event_loop().run_in_executor(
-                            None, search_service.search, query
-                        )
-                        all_citations.extend(results)
-
-                        yield {"type": "search_results", "results": results}
-
-                        tool_content = _format_search_results(results)
-                        full_messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc["id"],
-                            "content": tool_content,
-                        })
-
-                    elif fn_name == "feishu_send_message":
-                        try:
-                            args = json.loads(tc["function"]["arguments"])
-                            content = args.get("content", "")
-                        except Exception:
-                            content = ""
-
-                        yield {"type": "tool_call", "name": "feishu_send_message", "status": "sending"}
-
-                        result = await feishu_service.send_message(content)
-
-                        if result["success"]:
-                            tool_content = "消息已成功发送到飞书。"
-                        else:
-                            tool_content = f"发送失败：{result.get('error', '未知错误')}"
-
-                        full_messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc["id"],
-                            "content": tool_content,
-                        })
-                continue
-
-            break
+                # 动态追加新工具定义（get_skill_detail 返回的）
+                for new_def in new_tool_defs:
+                    if not any(t["function"]["name"] == new_def["function"]["name"] for t in tools):
+                        tools.append(new_def)
 
         yield {"type": "done", "citations": all_citations}
 
     except Exception as e:
+        logger.exception("stream_chat 异常")
         yield {"type": "error", "message": str(e)}
+
+
+async def _dispatch_tools(
+    tool_calls: list[dict],
+    current_tools: list[dict],
+    all_citations: list[dict],
+) -> list[tuple[str, str, list[dict], list[dict]]]:
+    """
+    并发执行所有工具调用。
+    返回列表，每项为 (tool_call_id, tool_content, sse_events, new_tool_defs)
+    """
+    tasks = [
+        _execute_tool(tc, current_tools, all_citations)
+        for tc in tool_calls
+    ]
+    return await asyncio.gather(*tasks)
+
+
+async def _execute_tool(
+    tc: dict,
+    current_tools: list[dict],
+    all_citations: list[dict],
+) -> tuple[str, str, list[dict], list[dict]]:
+    """
+    执行单个工具调用。
+    返回 (tool_call_id, tool_content, sse_events, new_tool_defs)
+    """
+    tc_id = tc["id"]
+    fn_name = tc["function"]["name"]
+    sse_events: list[dict] = []
+    new_tool_defs: list[dict] = []
+
+    try:
+        args = json.loads(tc["function"]["arguments"])
+    except Exception:
+        args = {}
+
+    skill_mgr = get_skill_manager()
+    mcp_mgr = get_mcp_manager()
+
+    # ── 1. 内置：网络搜索 ──────────────────────────────────────
+    if fn_name == "web_search":
+        query = args.get("query", "")
+        sse_events.append({"type": "searching", "query": query})
+
+        results = await asyncio.get_event_loop().run_in_executor(
+            None, search_service.search, query
+        )
+        all_citations.extend(results)
+        sse_events.append({"type": "search_results", "results": results})
+        tool_content = _format_search_results(results)
+
+    # ── 2. 内置：飞书发送 ──────────────────────────────────────
+    elif fn_name == "feishu_send_message":
+        content = args.get("content", "")
+        sse_events.append({"type": "tool_call", "name": fn_name, "status": "sending"})
+
+        result = await feishu_service.send_message(content)
+        tool_content = "消息已成功发送到飞书。" if result["success"] else f"发送失败：{result.get('error', '未知错误')}"
+
+    # ── 3. get_skill_detail（按需加载 Skill 详情 + 工具）──────
+    elif fn_name == "get_skill_detail":
+        skill_name = args.get("skill_name", "")
+        skill = skill_mgr.get(skill_name)
+
+        if skill and skill.enabled:
+            tool_content = skill.detail
+            # 把该 Skill 的工具追加到本轮 tools（动态注入）
+            new_tool_defs = [t.definition for t in skill.tools.values()]
+            sse_events.append({"type": "tool_call", "name": "get_skill_detail", "status": skill_name})
+        else:
+            tool_content = f"未找到技能 '{skill_name}'，可用技能：{[s.name for s in skill_mgr.enabled_skills]}"
+
+    # ── 4. Skill tool.py 注册的工具 ───────────────────────────
+    elif (skill_tool := skill_mgr.find_tool(fn_name)) is not None:
+        skill = skill_mgr.get_skill_by_tool(fn_name)
+        skill_name = skill.name if skill else fn_name
+        sse_events.append({"type": "tool_call", "name": fn_name, "status": "running"})
+
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: skill_tool.function(**args)
+            )
+            tool_content = str(result)
+        except Exception as e:
+            logger.error("Skill 工具执行失败 [%s]: %s", fn_name, e)
+            tool_content = f"工具执行失败: {e}"
+
+    # ── 5. MCP 工具 ───────────────────────────────────────────
+    elif mcp_mgr.has_tool(fn_name):
+        sse_events.append({"type": "tool_call", "name": fn_name, "status": "running"})
+        tool_content = await mcp_mgr.call_tool(fn_name, args)
+
+    # ── 未知工具 ──────────────────────────────────────────────
+    else:
+        logger.warning("未知工具调用: %s", fn_name)
+        tool_content = f"未找到工具 '{fn_name}'"
+
+    return tc_id, tool_content, sse_events, new_tool_defs
 
 
 def _format_search_results(results: list[dict]) -> str:

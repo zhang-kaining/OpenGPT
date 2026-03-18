@@ -93,7 +93,15 @@
         </div>
         <span class="user-name">davis kenny</span>
       </button>
+      <button class="icon-btn settings-btn" title="设置" @click="showSettings = true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
     </div>
+
+    <SettingsPanel :visible="showSettings" @close="showSettings = false" />
   </aside>
 </template>
 
@@ -101,6 +109,9 @@
 import { ref, nextTick, watch } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import type { Conversation } from '@/types'
+import SettingsPanel from './SettingsPanel.vue'
+
+const showSettings = ref(false)
 
 const store = useChatStore()
 const editingId = ref<string | null>(null)
@@ -315,10 +326,13 @@ function openMemory() {
 .sidebar-footer {
   padding: 8px;
   border-top: 1px solid rgba(255,255,255,0.06);
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .footer-user-btn {
-  width: 100%;
+  flex: 1;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -328,8 +342,13 @@ function openMemory() {
   border-radius: 8px;
   cursor: pointer;
   transition: background 0.12s;
+  min-width: 0;
 }
 .footer-user-btn:hover { background: var(--bg-hover); }
+
+.settings-btn {
+  flex-shrink: 0;
+}
 
 .user-avatar {
   width: 32px;

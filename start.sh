@@ -84,6 +84,16 @@ start_services() {
       > "$LOG_DIR/backend.log" 2>&1 &
     BACKEND_PID=$!
 
+    # 等待后端就绪（最多 30 秒）
+    echo "[后端] 等待启动..."
+    for i in $(seq 1 30); do
+      if grep -q "Application startup complete" "$LOG_DIR/backend.log" 2>/dev/null; then
+        echo "[后端] 已就绪 ✅"
+        break
+      fi
+      sleep 1
+    done
+
     cd "$ROOT/frontend"
     nohup npm run dev \
       > "$LOG_DIR/frontend.log" 2>&1 &
