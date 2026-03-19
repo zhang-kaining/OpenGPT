@@ -8,8 +8,8 @@
     </div>
     <div class="citation-items">
       <a
-        v-for="c in citations"
-        :key="c.index"
+        v-for="(c, i) in citations"
+        :key="i"
         :href="c.url"
         target="_blank"
         rel="noopener noreferrer"

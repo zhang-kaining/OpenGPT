@@ -21,7 +21,7 @@
         ref="textareaRef"
         v-model="inputText"
         class="input-textarea"
-        placeholder="给 ChatGPT 发送消息"
+        placeholder="给 OpenGPT 发送消息"
         rows="1"
         @keydown="handleKeydown"
         @input="autoResize"
@@ -63,21 +63,29 @@
             <span>搜索</span>
           </button>
         </div>
-        <!-- 发送按钮 -->
+        <!-- 发送 / 停止按钮 -->
         <button
+          v-if="store.isLoading"
+          class="send-btn stop"
+          title="停止生成 (Esc)"
+          @click="handleStop"
+        >
+          <div class="stop-icon"></div>
+        </button>
+        <button
+          v-else
           class="send-btn"
           :class="{ active: canSend }"
           :disabled="!canSend"
           @click="handleSend"
         >
-          <svg v-if="!store.isLoading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 19V5M5 12l7-7 7 7"/>
           </svg>
-          <div v-else class="stop-icon"></div>
         </button>
       </div>
     </div>
-    <p class="input-hint">ChatGPT 可能会犯错。请核实重要信息。</p>
+    <p class="input-hint">OpenGPT 可能会犯错。请核实重要信息。</p>
   </div>
 </template>
 
@@ -96,6 +104,10 @@ const canSend = computed(() =>
   !store.isLoading && (inputText.value.trim().length > 0 || pendingImages.value.length > 0)
 )
 
+function handleStop() {
+  store.stopGeneration()
+}
+
 function autoResize() {
   const el = textareaRef.value
   if (!el) return
@@ -104,6 +116,11 @@ function autoResize() {
 }
 
 function handleKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && store.isLoading) {
+    e.preventDefault()
+    handleStop()
+    return
+  }
   if (e.key !== 'Enter') return
   if (e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return
   if (e.isComposing || (e as KeyboardEvent & { keyCode?: number }).keyCode === 229) return
@@ -185,14 +202,14 @@ function removeImage(index: number) {
   max-width: 720px;
   margin: 0 auto;
   background: var(--bg-input);
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid var(--border);
   border-radius: 16px;
   display: flex;
   flex-direction: column;
   transition: border-color 0.15s;
 }
 .input-wrapper.focused {
-  border-color: rgba(255,255,255,0.2);
+  border-color: var(--border-strong);
 }
 
 .image-previews {
@@ -280,11 +297,11 @@ function removeImage(index: number) {
   transition: background 0.15s, color 0.15s;
 }
 .tool-btn:hover {
-  background: rgba(255,255,255,0.08);
+  background: var(--surface-2);
   color: var(--text-secondary);
 }
 .tool-btn.search-toggle.active {
-  background: rgba(255,255,255,0.1);
+  background: var(--bg-active);
   color: var(--text-primary);
 }
 
@@ -304,15 +321,20 @@ function removeImage(index: number) {
 }
 .send-btn.active {
   background: var(--send-btn-active);
-  color: #000;
+  color: var(--send-btn-icon);
 }
 .send-btn:disabled { cursor: not-allowed; }
-.send-btn.active:hover { background: #d4d4d4; }
+.send-btn.active:hover { opacity: 0.85; }
+.send-btn.stop {
+  background: var(--send-btn-active);
+  cursor: pointer;
+}
+.send-btn.stop:hover { opacity: 0.85; }
 
 .stop-icon {
   width: 12px;
   height: 12px;
-  background: #000;
+  background: var(--send-btn-icon);
   border-radius: 2px;
 }
 

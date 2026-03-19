@@ -60,7 +60,7 @@ const store = useChatStore()
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--overlay-bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -77,7 +77,7 @@ const store = useChatStore()
   max-height: 70vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  box-shadow: var(--modal-shadow);
 }
 
 .panel-header {

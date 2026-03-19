@@ -1,16 +1,68 @@
 import type { Conversation, Message, MemoryItem, Citation } from '@/types'
+import { getAuthHeaders, clearAuth } from '@/composables/useAuth'
 
 const BASE = '/api'
+
+async function authFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const headers = { ...getAuthHeaders(), ...init.headers as Record<string, string> }
+  const res = await fetch(url, { ...init, headers })
+  if (res.status === 401) {
+    clearAuth()
+    window.location.reload()
+  }
+  return res
+}
+
+// ---- Auth ----
+
+export async function login(username: string, password: string) {
+  const res = await fetch(`${BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function register(username: string, password: string, displayName?: string) {
+  const res = await fetch(`${BASE}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password, display_name: displayName || '' }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function changePassword(oldPassword: string, newPassword: string) {
+  const res = await authFetch(`${BASE}/auth/change-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
 
 // ---- Conversations ----
 
 export async function listConversations(): Promise<Conversation[]> {
-  const res = await fetch(`${BASE}/conversations`)
+  const res = await authFetch(`${BASE}/conversations`)
   return res.json()
 }
 
 export async function createConversation(title?: string): Promise<Conversation> {
-  const res = await fetch(`${BASE}/conversations`, {
+  const res = await authFetch(`${BASE}/conversations`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title }),
@@ -19,7 +71,7 @@ export async function createConversation(title?: string): Promise<Conversation> 
 }
 
 export async function updateConversationTitle(id: string, title: string) {
-  await fetch(`${BASE}/conversations/${id}`, {
+  await authFetch(`${BASE}/conversations/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title }),
@@ -27,28 +79,28 @@ export async function updateConversationTitle(id: string, title: string) {
 }
 
 export async function deleteConversation(id: string) {
-  await fetch(`${BASE}/conversations/${id}`, { method: 'DELETE' })
+  await authFetch(`${BASE}/conversations/${id}`, { method: 'DELETE' })
 }
 
 export async function getMessages(convId: string): Promise<Message[]> {
-  const res = await fetch(`${BASE}/conversations/${convId}/messages`)
+  const res = await authFetch(`${BASE}/conversations/${convId}/messages`)
   return res.json()
 }
 
 export async function searchConversations(q: string): Promise<Conversation[]> {
-  const res = await fetch(`${BASE}/conversations/search?q=${encodeURIComponent(q)}`)
+  const res = await authFetch(`${BASE}/conversations/search?q=${encodeURIComponent(q)}`)
   return res.json()
 }
 
 // ---- Memory ----
 
 export async function getMemories(): Promise<MemoryItem[]> {
-  const res = await fetch(`${BASE}/memory`)
+  const res = await authFetch(`${BASE}/memory`)
   return res.json()
 }
 
 export async function deleteMemory(id: string) {
-  await fetch(`${BASE}/memory/${id}`, { method: 'DELETE' })
+  await authFetch(`${BASE}/memory/${id}`, { method: 'DELETE' })
 }
 
 // ---- Chat (SSE) ----
@@ -73,7 +125,10 @@ export async function sendMessage(
 ) {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
     body: JSON.stringify({
       content,
       conversation_id: conversationId,
@@ -82,6 +137,12 @@ export async function sendMessage(
     }),
     signal,
   })
+
+  if (res.status === 401) {
+    clearAuth()
+    window.location.reload()
+    return
+  }
 
   if (!res.ok) {
     callbacks.onError?.(`HTTP ${res.status}`)

@@ -250,6 +250,9 @@ async def _execute_tool(
         results = await asyncio.get_event_loop().run_in_executor(
             None, search_service.search, query
         )
+        offset = len(all_citations)
+        for r in results:
+            r["index"] = offset + r["index"]
         all_citations.extend(results)
         sse_events.append({"type": "search_results", "results": results})
         tool_content = _format_search_results(results)

@@ -12,6 +12,7 @@ export const useChatStore = defineStore('chat', () => {
   const searchQuery = ref('')
   const enableSearch = ref(true)
   const showMemoryPanel = ref(false)
+  let currentAbort: AbortController | null = null
 
   const currentConversation = computed(() =>
     conversations.value.find(c => c.id === currentConvId.value) ?? null
@@ -86,7 +87,7 @@ export const useChatStore = defineStore('chat', () => {
     const aiIdx = messages.value.length - 1
     const userIdx = messages.value.length - 2
 
-    const abortController = new AbortController()
+    currentAbort = new AbortController()
 
     try {
       await api.sendMessage(
@@ -145,7 +146,7 @@ export const useChatStore = defineStore('chat', () => {
             isLoading.value = false
           },
         },
-        abortController.signal,
+        currentAbort.signal,
         images
       )
     } catch (e: any) {
@@ -155,7 +156,21 @@ export const useChatStore = defineStore('chat', () => {
       messages.value[aiIdx].streaming = false
       messages.value[aiIdx].searching = false
       isLoading.value = false
+      currentAbort = null
     }
+  }
+
+  function stopGeneration() {
+    if (currentAbort) {
+      currentAbort.abort()
+      currentAbort = null
+    }
+    const lastMsg = messages.value[messages.value.length - 1]
+    if (lastMsg?.streaming) {
+      lastMsg.streaming = false
+      lastMsg.searching = false
+    }
+    isLoading.value = false
   }
 
   async function loadMemories() {
@@ -184,6 +199,7 @@ export const useChatStore = defineStore('chat', () => {
     deleteConversation,
     renameConversation,
     sendMessage,
+    stopGeneration,
     loadMemories,
     deleteMemory,
   }

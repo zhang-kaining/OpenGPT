@@ -4,9 +4,7 @@
       <!-- AI 消息：左对齐，无气泡 -->
       <template v-if="message.role === 'assistant'">
         <div class="assistant-avatar">
-          <svg width="16" height="16" viewBox="0 0 41 41" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M37.532 16.87a9.963 9.963 0 0 0-.856-8.184 10.078 10.078 0 0 0-10.855-4.835 9.964 9.964 0 0 0-6.239-2.975 10.079 10.079 0 0 0-10.699 4.988 9.964 9.964 0 0 0-6.675 4.529 10.079 10.079 0 0 0 1.24 11.817 9.965 9.965 0 0 0 .856 8.185 10.079 10.079 0 0 0 10.855 4.835 9.965 9.965 0 0 0 6.239 2.974 10.079 10.079 0 0 0 10.699-4.987 9.965 9.965 0 0 0 6.675-4.53 10.079 10.079 0 0 0-1.24-11.817zm-17.297 24.12a7.474 7.474 0 0 1-4.799-1.735c.061-.033.168-.091.237-.134l7.964-4.6a1.294 1.294 0 0 0 .655-1.134V19.054l3.366 1.944a.12.12 0 0 1 .066.092v9.299a7.505 7.505 0 0 1-7.49 7.601zm-16.124-6.908a7.474 7.474 0 0 1-.894-5.023c.06.036.162.099.237.141l7.964 4.6a1.297 1.297 0 0 0 1.308 0l9.724-5.614v3.888a.12.12 0 0 1-.048.103l-8.051 4.649a7.504 7.504 0 0 1-10.24-2.744zm-2.09-17.496a7.473 7.473 0 0 1 3.908-3.285c0 .068-.004.19-.004.274v9.201a1.294 1.294 0 0 0 .654 1.132l9.723 5.614-3.366 1.944a.12.12 0 0 1-.114.012L4.502 23.464a7.504 7.504 0 0 1-.482-10.878zm27.693 6.44l-9.724-5.615 3.367-1.943a.121.121 0 0 1 .114-.012l8.048 4.648a7.498 7.498 0 0 1-1.158 13.528v-9.476a1.293 1.293 0 0 0-.647-1.13zm3.35-5.043c-.059-.037-.162-.099-.236-.141l-7.965-4.6a1.298 1.298 0 0 0-1.308 0l-9.723 5.614v-3.888a.12.12 0 0 1 .048-.103l8.05-4.645a7.497 7.497 0 0 1 11.135 7.763zm-21.063 6.929l-3.367-1.944a.12.12 0 0 1-.065-.092v-9.299a7.497 7.497 0 0 1 12.293-5.756 6.94 6.94 0 0 0-.236.134l-7.965 4.6a1.294 1.294 0 0 0-.654 1.132l-.006 11.225zm1.829-3.943l4.33-2.501 4.332 2.5v4.999l-4.331 2.5-4.331-2.5V21z" fill="currentColor"/>
-          </svg>
+          <img src="/hamster.svg" alt="AI" width="20" height="20" />
         </div>
         <div class="assistant-content">
           <!-- 搜索中状态 -->
@@ -26,8 +24,11 @@
           ></div>
 
           <!-- 等待动画（还没有内容时） -->
-          <div v-if="message.streaming && !message.searching && !message.content" class="thinking-dots">
-            <span></span><span></span><span></span>
+          <div v-if="message.streaming && !message.searching && !message.content" class="thinking-indicator">
+            <div class="thinking-bars">
+              <span></span><span></span><span></span><span></span>
+            </div>
+            <span class="thinking-label">思考中</span>
           </div>
 
           <!-- 引用来源 -->
@@ -203,13 +204,13 @@ function openImage(src: string) {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: #19c37d;
+  background: #fef3dc;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
   flex-shrink: 0;
   margin-top: 4px;
+  overflow: hidden;
 }
 
 .assistant-content {
@@ -226,9 +227,9 @@ function openImage(src: string) {
   font-size: 13px;
   margin-bottom: 10px;
   padding: 6px 12px 6px 10px;
-  background: rgba(255,255,255,0.04);
+  background: var(--surface-1);
   border-radius: 20px;
-  border: 1px solid rgba(255,255,255,0.08);
+  border: 1px solid var(--border-light);
 }
 .tool-call-indicator {
   background: rgba(0, 168, 112, 0.08);
@@ -258,34 +259,46 @@ function openImage(src: string) {
 .search-spinner span { animation-delay: 0.2s; }
 .search-spinner::after { animation-delay: 0.4s; }
 
-/* 等待回复：三个渐变跳动点 */
-.thinking-dots {
+/* 等待回复：脉冲光条 + 文字 */
+.thinking-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px 6px 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-light);
+  border-radius: 20px;
+}
+.thinking-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.thinking-bars {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 0;
-  height: 28px;
+  gap: 3px;
+  height: 16px;
 }
-.thinking-dots span {
+.thinking-bars span {
   display: block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-muted);
-  animation: thinking 1.4s ease-in-out infinite;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--text-secondary);
+  animation: bar-pulse 1.2s ease-in-out infinite;
 }
-.thinking-dots span:nth-child(1) { animation-delay: 0s; }
-.thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
-.thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+.thinking-bars span:nth-child(1) { height: 8px;  animation-delay: 0s; }
+.thinking-bars span:nth-child(2) { height: 12px; animation-delay: 0.15s; }
+.thinking-bars span:nth-child(3) { height: 16px; animation-delay: 0.3s; }
+.thinking-bars span:nth-child(4) { height: 10px; animation-delay: 0.45s; }
 
-@keyframes thinking {
-  0%, 60%, 100% {
-    transform: translateY(0);
-    background: var(--text-muted);
+@keyframes bar-pulse {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scaleY(0.6);
   }
-  30% {
-    transform: translateY(-6px);
-    background: var(--text-secondary);
+  50% {
+    opacity: 1;
+    transform: scaleY(1);
   }
 }
 

@@ -19,6 +19,7 @@ async def init_db():
         await db.execute("""
             CREATE TABLE IF NOT EXISTS conversations (
                 id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL DEFAULT '',
                 title TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -35,38 +36,48 @@ async def init_db():
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
             )
         """)
+        # 兼容旧表：如果 user_id 列不存在则添加
+        try:
+            await db.execute("ALTER TABLE conversations ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
         await db.commit()
 
 
-async def create_conversation(title: Optional[str] = None) -> dict:
+async def create_conversation(user_id: str, title: Optional[str] = None) -> dict:
     conv_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     title = title or "新对话"
     async with aiosqlite.connect(settings.db_path) as db:
         await db.execute(
-            "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (conv_id, title, now, now)
+            "INSERT INTO conversations (id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (conv_id, user_id, title, now, now)
         )
         await db.commit()
     return {"id": conv_id, "title": title, "created_at": now, "updated_at": now}
 
 
-async def list_conversations() -> list:
+async def list_conversations(user_id: str) -> list:
     async with aiosqlite.connect(settings.db_path) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT * FROM conversations ORDER BY updated_at DESC"
+            "SELECT id, title, created_at, updated_at FROM conversations WHERE user_id = ? ORDER BY updated_at DESC",
+            (user_id,)
         ) as cursor:
             rows = await cursor.fetchall()
     return [dict(r) for r in rows]
 
 
-async def get_conversation(conv_id: str) -> Optional[dict]:
+async def get_conversation(conv_id: str, user_id: str = "") -> Optional[dict]:
     async with aiosqlite.connect(settings.db_path) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM conversations WHERE id = ?", (conv_id,)
-        ) as cursor:
+        if user_id:
+            sql = "SELECT * FROM conversations WHERE id = ? AND user_id = ?"
+            params = (conv_id, user_id)
+        else:
+            sql = "SELECT * FROM conversations WHERE id = ?"
+            params = (conv_id,)
+        async with db.execute(sql, params) as cursor:
             row = await cursor.fetchone()
     return dict(row) if row else None
 
@@ -81,9 +92,12 @@ async def update_conversation_title(conv_id: str, title: str):
         await db.commit()
 
 
-async def delete_conversation(conv_id: str):
+async def delete_conversation(conv_id: str, user_id: str = ""):
     async with aiosqlite.connect(settings.db_path) as db:
-        await db.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
+        if user_id:
+            await db.execute("DELETE FROM conversations WHERE id = ? AND user_id = ?", (conv_id, user_id))
+        else:
+            await db.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
         await db.commit()
 
 
@@ -132,15 +146,15 @@ async def get_messages(conversation_id: str) -> list:
     return result
 
 
-async def search_conversations(query: str) -> list:
+async def search_conversations(user_id: str, query: str) -> list:
     async with aiosqlite.connect(settings.db_path) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT DISTINCT c.* FROM conversations c "
+            "SELECT DISTINCT c.id, c.title, c.created_at, c.updated_at FROM conversations c "
             "LEFT JOIN messages m ON c.id = m.conversation_id "
-            "WHERE c.title LIKE ? OR m.content LIKE ? "
+            "WHERE c.user_id = ? AND (c.title LIKE ? OR m.content LIKE ?) "
             "ORDER BY c.updated_at DESC",
-            (f"%{query}%", f"%{query}%")
+            (user_id, f"%{query}%", f"%{query}%")
         ) as cursor:
             rows = await cursor.fetchall()
     return [dict(r) for r in rows]

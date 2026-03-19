@@ -25,6 +25,63 @@
           </button>
         </div>
 
+        <!-- General Tab -->
+        <div v-if="activeTab === 'general'" class="tab-content">
+          <div class="setting-group">
+            <div class="setting-label">外观</div>
+            <div class="theme-options">
+              <button
+                v-for="opt in themeOptions"
+                :key="opt.value"
+                class="theme-option"
+                :class="{ active: themeMode === opt.value }"
+                @click="themeMode = opt.value"
+              >
+                <svg v-if="opt.value === 'light'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+                </svg>
+                <svg v-else-if="opt.value === 'dark'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                </svg>
+                <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><path d="M8 21h8M12 17v4"/>
+                </svg>
+                <span>{{ opt.label }}</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 修改密码 -->
+          <div class="setting-group" style="margin-top: 16px;">
+            <div class="setting-label">修改密码</div>
+            <div class="pw-form">
+              <input
+                v-model="oldPw"
+                type="password"
+                placeholder="当前密码"
+                class="pw-input"
+              />
+              <input
+                v-model="newPw"
+                type="password"
+                placeholder="新密码（至少6位）"
+                class="pw-input"
+              />
+              <input
+                v-model="confirmPw"
+                type="password"
+                placeholder="确认新密码"
+                class="pw-input"
+              />
+              <div v-if="pwError" class="pw-msg pw-error">{{ pwError }}</div>
+              <div v-if="pwSuccess" class="pw-msg pw-ok">密码修改成功</div>
+              <button class="btn-primary pw-submit" :disabled="pwLoading" @click="handleChangePw">
+                {{ pwLoading ? '提交中...' : '修改密码' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
         <!-- Skills Tab -->
         <div v-if="activeTab === 'skills'" class="tab-content">
           <p class="tab-desc">技能是预置的工具和行为指令，按需启用。</p>
@@ -95,15 +152,25 @@
 
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
+import { themeMode } from '@/composables/useTheme'
+import type { ThemeMode } from '@/composables/useTheme'
+import * as api from '@/services/api'
 
 const props = defineProps<{ visible: boolean }>()
 defineEmits(['close'])
 
 const tabs = [
-  { id: 'skills', label: '技能 Skills' },
-  { id: 'mcp',    label: 'MCP 工具' },
+  { id: 'general', label: '通用' },
+  { id: 'skills',  label: '技能 Skills' },
+  { id: 'mcp',     label: 'MCP 工具' },
 ]
-const activeTab = ref('skills')
+const activeTab = ref('general')
+
+const themeOptions: { value: ThemeMode; label: string }[] = [
+  { value: 'light', label: '亮色' },
+  { value: 'dark',  label: '暗色' },
+  { value: 'system', label: '跟随系统' },
+]
 
 // ── Skills ────────────────────────────────────────────────────────────────────
 
@@ -140,6 +207,37 @@ async function toggleSkill(name: string, enabled: boolean) {
     if (skill) skill.enabled = enabled
   } finally {
     togglingSkill.value = null
+  }
+}
+
+// ── Change Password ──────────────────────────────────────────────────────────
+
+const oldPw = ref('')
+const newPw = ref('')
+const confirmPw = ref('')
+const pwError = ref('')
+const pwSuccess = ref(false)
+const pwLoading = ref(false)
+
+async function handleChangePw() {
+  pwError.value = ''
+  pwSuccess.value = false
+
+  if (!oldPw.value) { pwError.value = '请输入当前密码'; return }
+  if (newPw.value.length < 6) { pwError.value = '新密码至少 6 个字符'; return }
+  if (newPw.value !== confirmPw.value) { pwError.value = '两次新密码不一致'; return }
+
+  pwLoading.value = true
+  try {
+    await api.changePassword(oldPw.value, newPw.value)
+    pwSuccess.value = true
+    oldPw.value = ''
+    newPw.value = ''
+    confirmPw.value = ''
+  } catch (e: any) {
+    pwError.value = e.message || '修改失败'
+  } finally {
+    pwLoading.value = false
   }
 }
 
@@ -201,6 +299,11 @@ watch(() => props.visible, (val) => {
     loadSkills()
     loadMcpConfig()
     mcpSaveResult.value = null
+    oldPw.value = ''
+    newPw.value = ''
+    confirmPw.value = ''
+    pwError.value = ''
+    pwSuccess.value = false
   }
 })
 </script>
@@ -209,7 +312,7 @@ watch(() => props.visible, (val) => {
 .settings-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--overlay-bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -218,8 +321,8 @@ watch(() => props.visible, (val) => {
 }
 
 .settings-panel {
-  background: #1e1e1e;
-  border: 1px solid rgba(255,255,255,0.1);
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
   border-radius: 16px;
   width: 560px;
   max-width: 95vw;
@@ -227,7 +330,7 @@ watch(() => props.visible, (val) => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+  box-shadow: var(--modal-shadow);
 }
 
 .panel-header {
@@ -235,7 +338,7 @@ watch(() => props.visible, (val) => {
   align-items: center;
   justify-content: space-between;
   padding: 20px 24px 16px;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
+  border-bottom: 1px solid var(--border-light);
 }
 
 .panel-header h2 {
@@ -263,7 +366,7 @@ watch(() => props.visible, (val) => {
   display: flex;
   gap: 4px;
   padding: 12px 24px 0;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
+  border-bottom: 1px solid var(--border-light);
 }
 
 .tab-btn {
@@ -315,12 +418,12 @@ watch(() => props.visible, (val) => {
   justify-content: space-between;
   gap: 16px;
   padding: 14px 16px;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.07);
+  background: var(--surface-1);
+  border: 1px solid var(--border-light);
   border-radius: 10px;
   transition: border-color 0.15s;
 }
-.skill-item:hover { border-color: rgba(255,255,255,0.14); }
+.skill-item:hover { border-color: var(--border); }
 
 .skill-info { flex: 1; min-width: 0; }
 
@@ -365,7 +468,7 @@ watch(() => props.visible, (val) => {
 .toggle-slider {
   position: absolute;
   inset: 0;
-  background: rgba(255,255,255,0.15);
+  background: var(--toggle-bg);
   border-radius: 22px;
   cursor: pointer;
   transition: background 0.2s;
@@ -391,7 +494,7 @@ watch(() => props.visible, (val) => {
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
-  background: rgba(255,255,255,0.04);
+  background: var(--surface-1);
   border-radius: 8px;
   font-size: 13px;
   color: var(--text-secondary);
@@ -423,8 +526,8 @@ watch(() => props.visible, (val) => {
 .json-editor {
   width: 100%;
   min-height: 200px;
-  background: #141414;
-  border: 1px solid rgba(255,255,255,0.1);
+  background: var(--panel-input-bg);
+  border: 1px solid var(--border);
   border-radius: 10px;
   color: var(--text-primary);
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
@@ -435,7 +538,7 @@ watch(() => props.visible, (val) => {
   outline: none;
   transition: border-color 0.15s;
 }
-.json-editor:focus { border-color: rgba(255,255,255,0.25); }
+.json-editor:focus { border-color: var(--border-strong); }
 
 .json-error {
   font-size: 12px;
@@ -465,10 +568,10 @@ watch(() => props.visible, (val) => {
 .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-secondary {
-  background: rgba(255,255,255,0.08);
+  background: var(--surface-2);
   color: var(--text-primary);
 }
-.btn-secondary:hover { background: rgba(255,255,255,0.12); }
+.btn-secondary:hover { background: var(--surface-3); }
 
 .save-result {
   font-size: 13px;
@@ -484,4 +587,71 @@ watch(() => props.visible, (val) => {
   font-size: 13px;
   padding: 24px;
 }
+
+/* Theme selector */
+.setting-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.setting-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.theme-options {
+  display: flex;
+  gap: 8px;
+}
+.theme-option {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 12px;
+  background: var(--surface-1);
+  border: 2px solid transparent;
+  border-radius: 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.theme-option:hover {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+.theme-option.active {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--text-primary);
+}
+
+/* Password form */
+.pw-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pw-input {
+  padding: 10px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.pw-input:focus { border-color: var(--accent); }
+.pw-input::placeholder { color: var(--text-muted); }
+.pw-msg {
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+.pw-error { color: var(--danger); background: rgba(239,68,68,0.08); }
+.pw-ok { color: var(--accent); background: var(--accent-light); }
+.pw-submit { margin-top: 2px; }
 </style>

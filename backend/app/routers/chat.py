@@ -1,15 +1,14 @@
 import asyncio
 import json
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from app.models.schemas import MessageCreate
 from app.services import conversation as conv_service
 from app.services import memory as mem_service
 from app.services import azure_openai as oai_service
-from app.config import get_settings
+from app.deps import get_current_user
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
-settings = get_settings()
 
 
 def sse(data: str) -> str:
@@ -18,15 +17,16 @@ def sse(data: str) -> str:
 
 
 @router.post("")
-async def chat(body: MessageCreate):
-    # 确保会话存在
+async def chat(request: Request, body: MessageCreate, user: dict = Depends(get_current_user)):
+    user_id = user["id"]
+
     if body.conversation_id:
-        conv = await conv_service.get_conversation(body.conversation_id)
+        conv = await conv_service.get_conversation(body.conversation_id, user_id)
         if not conv:
             raise HTTPException(status_code=404, detail="Conversation not found")
         conv_id = body.conversation_id
     else:
-        conv = await conv_service.create_conversation()
+        conv = await conv_service.create_conversation(user_id)
         conv_id = conv["id"]
 
     # 保存用户消息（仅存文字部分）
@@ -54,23 +54,30 @@ async def chat(body: MessageCreate):
                 })
             last_user["content"] = content_parts
 
-    # 检索相关记忆
-    memories = mem_service.search_memories(body.content, settings.user_id)
+    memories = mem_service.search_memories(body.content, user_id)
 
     async def event_generator():
         full_response = ""
         citations = []
+        disconnected = False
 
-        # 先推送会话 ID
         yield sse(json.dumps({"type": "conv_id", "conv_id": conv_id}, ensure_ascii=False))
 
         async for event in oai_service.stream_chat(messages, memories, body.enable_search):
+            if await request.is_disconnected():
+                disconnected = True
+                break
+
             if event["type"] == "token":
-                # 逐字拆分，产生打字机效果
                 for char in event["content"]:
                     full_response += char
                     yield sse(json.dumps({"type": "token", "content": char}, ensure_ascii=False))
                     await asyncio.sleep(0.015)
+                    if await request.is_disconnected():
+                        disconnected = True
+                        break
+                if disconnected:
+                    break
             elif event["type"] in ("searching", "search_results"):
                 yield sse(json.dumps(event, ensure_ascii=False))
             elif event["type"] == "done":
@@ -79,20 +86,21 @@ async def chat(body: MessageCreate):
             elif event["type"] == "error":
                 yield sse(json.dumps(event, ensure_ascii=False))
 
-        # 保存 AI 回复
         if full_response:
             await conv_service.add_message(conv_id, "assistant", full_response, citations or None)
             all_msgs = await conv_service.get_messages(conv_id)
             if len(all_msgs) == 2:
                 title = body.content[:30].replace("\n", " ")
                 await conv_service.update_conversation_title(conv_id, title)
-            mem_service.add_memories(
-                [{"role": "user", "content": body.content},
-                 {"role": "assistant", "content": full_response}],
-                settings.user_id
-            )
+            if not disconnected:
+                mem_service.add_memories(
+                    [{"role": "user", "content": body.content},
+                     {"role": "assistant", "content": full_response}],
+                    user_id
+                )
 
-        yield sse("[DONE]")
+        if not disconnected:
+            yield sse("[DONE]")
 
     return StreamingResponse(
         event_generator(),

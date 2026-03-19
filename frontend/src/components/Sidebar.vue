@@ -87,11 +87,15 @@
     <div class="sidebar-footer">
       <button class="footer-user-btn" @click="openMemory">
         <div class="user-avatar">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/>
-          </svg>
+          <img src="/hamster.svg" alt="avatar" width="20" height="20" />
         </div>
-        <span class="user-name">davis kenny</span>
+        <span class="user-name">{{ currentUser?.display_name || currentUser?.username || '用户' }}</span>
+      </button>
+      <button class="icon-btn settings-btn" title="退出登录" @click="logout">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+          <polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+        </svg>
       </button>
       <button class="icon-btn settings-btn" title="设置" @click="showSettings = true">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -106,18 +110,27 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, watch } from 'vue'
+import { ref, nextTick, watch, inject } from 'vue'
+import type { Ref } from 'vue'
 import { useChatStore } from '@/stores/chat'
+import { currentUser, clearAuth } from '@/composables/useAuth'
 import type { Conversation } from '@/types'
 import SettingsPanel from './SettingsPanel.vue'
 
 const showSettings = ref(false)
 
 const store = useChatStore()
+const isCollapsed = inject<Ref<boolean>>('sidebarCollapsed', ref(false))
+
+function logout() {
+  if (confirm('确定退出登录？')) {
+    clearAuth()
+    window.location.reload()
+  }
+}
 const editingId = ref<string | null>(null)
 const editTitle = ref('')
 const editInput = ref<HTMLInputElement | null>(null)
-const isCollapsed = ref(false)
 const showSearch = ref(false)
 const searchInputRef = ref<HTMLInputElement | null>(null)
 
@@ -216,8 +229,8 @@ function openMemory() {
 .search-input {
   width: 100%;
   padding: 8px 28px 8px 32px;
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.1);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text-primary);
   font-size: 14px;
@@ -225,7 +238,7 @@ function openMemory() {
   transition: border-color 0.15s;
 }
 .search-input:focus {
-  border-color: rgba(255,255,255,0.25);
+  border-color: var(--border-strong);
 }
 .search-input::placeholder { color: var(--text-muted); }
 .clear-search {
@@ -283,8 +296,8 @@ function openMemory() {
 
 .conv-edit-input {
   flex: 1;
-  background: rgba(255,255,255,0.08);
-  border: 1px solid rgba(255,255,255,0.2);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   color: var(--text-primary);
   font-size: 14px;
@@ -325,7 +338,7 @@ function openMemory() {
 
 .sidebar-footer {
   padding: 8px;
-  border-top: 1px solid rgba(255,255,255,0.06);
+  border-top: 1px solid var(--border-light);
   display: flex;
   align-items: center;
   gap: 4px;
@@ -354,12 +367,12 @@ function openMemory() {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: #19c37d;
+  background: #fef3dc;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
   flex-shrink: 0;
+  overflow: hidden;
 }
 
 .user-name {

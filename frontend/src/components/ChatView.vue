@@ -1,9 +1,15 @@
 <template>
   <div class="chat-view">
-    <!-- 顶部栏（有对话时显示模型名） -->
-    <div class="chat-header" v-if="store.messages.length > 0">
-      <div class="model-selector">
-        <span>ChatGPT</span>
+    <!-- 顶部栏 -->
+    <div class="chat-header">
+      <button v-if="sidebarCollapsed" class="expand-sidebar-btn" title="展开侧边栏" @click="sidebarCollapsed = false">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <path d="M9 3v18"/>
+        </svg>
+      </button>
+      <div v-if="store.messages.length > 0" class="model-selector">
+        <span>OpenGPT</span>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <path d="m6 9 6 6 6-6"/>
         </svg>
@@ -15,21 +21,39 @@
       <!-- 欢迎页 -->
       <div v-if="store.messages.length === 0" class="welcome">
         <div class="welcome-logo">
-          <svg width="32" height="32" viewBox="0 0 41 41" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M37.532 16.87a9.963 9.963 0 0 0-.856-8.184 10.078 10.078 0 0 0-10.855-4.835 9.964 9.964 0 0 0-6.239-2.975 10.079 10.079 0 0 0-10.699 4.988 9.964 9.964 0 0 0-6.675 4.529 10.079 10.079 0 0 0 1.24 11.817 9.965 9.965 0 0 0 .856 8.185 10.079 10.079 0 0 0 10.855 4.835 9.965 9.965 0 0 0 6.239 2.974 10.079 10.079 0 0 0 10.699-4.987 9.965 9.965 0 0 0 6.675-4.53 10.079 10.079 0 0 0-1.24-11.817zm-17.297 24.12a7.474 7.474 0 0 1-4.799-1.735c.061-.033.168-.091.237-.134l7.964-4.6a1.294 1.294 0 0 0 .655-1.134V19.054l3.366 1.944a.12.12 0 0 1 .066.092v9.299a7.505 7.505 0 0 1-7.49 7.601zm-16.124-6.908a7.474 7.474 0 0 1-.894-5.023c.06.036.162.099.237.141l7.964 4.6a1.297 1.297 0 0 0 1.308 0l9.724-5.614v3.888a.12.12 0 0 1-.048.103l-8.051 4.649a7.504 7.504 0 0 1-10.24-2.744zm-2.09-17.496a7.473 7.473 0 0 1 3.908-3.285c0 .068-.004.19-.004.274v9.201a1.294 1.294 0 0 0 .654 1.132l9.723 5.614-3.366 1.944a.12.12 0 0 1-.114.012L4.502 23.464a7.504 7.504 0 0 1-.482-10.878zm27.693 6.44l-9.724-5.615 3.367-1.943a.121.121 0 0 1 .114-.012l8.048 4.648a7.498 7.498 0 0 1-1.158 13.528v-9.476a1.293 1.293 0 0 0-.647-1.13zm3.35-5.043c-.059-.037-.162-.099-.236-.141l-7.965-4.6a1.298 1.298 0 0 0-1.308 0l-9.723 5.614v-3.888a.12.12 0 0 1 .048-.103l8.05-4.645a7.497 7.497 0 0 1 11.135 7.763zm-21.063 6.929l-3.367-1.944a.12.12 0 0 1-.065-.092v-9.299a7.497 7.497 0 0 1 12.293-5.756 6.94 6.94 0 0 0-.236.134l-7.965 4.6a1.294 1.294 0 0 0-.654 1.132l-.006 11.225zm1.829-3.943l4.33-2.501 4.332 2.5v4.999l-4.331 2.5-4.331-2.5V21z" fill="currentColor"/>
-          </svg>
+          <img src="/hamster.svg" alt="logo" width="48" height="48" />
         </div>
         <h2>有什么可以帮忙的？</h2>
-        <div class="suggestion-grid">
-          <button
-            v-for="s in suggestions"
-            :key="s.title"
-            class="suggestion-btn"
-            @click="useSuggestion(s.text)"
-          >
-            <span class="suggestion-title">{{ s.title }}</span>
-            <span class="suggestion-sub">{{ s.sub }}</span>
-          </button>
+
+        <!-- 动态资讯 -->
+        <div v-if="newsItems.length" class="news-section">
+          <div class="news-header">
+            <span class="news-header-dot"></span>
+            <span>热点资讯</span>
+          </div>
+          <div class="news-grid">
+            <a
+              v-for="(n, i) in newsItems"
+              :key="i"
+              class="news-card"
+              :href="n.link"
+              target="_blank"
+              rel="noopener"
+              @click.prevent="useSuggestion(n.title)"
+            >
+              <span class="news-title">{{ n.title }}</span>
+              <span class="news-meta">
+                <span class="news-source">{{ n.source }}</span>
+                <span class="news-dot">·</span>
+                <span v-if="n.timeAgo">{{ n.timeAgo }}</span>
+              </span>
+            </a>
+          </div>
+        </div>
+        <div v-else-if="newsLoading" class="news-loading">
+          <span class="news-loading-dot"></span>
+          <span class="news-loading-dot"></span>
+          <span class="news-loading-dot"></span>
         </div>
       </div>
 
@@ -49,20 +73,57 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, inject, onMounted } from 'vue'
+import type { Ref } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import MessageBubble from './MessageBubble.vue'
 import InputBar from './InputBar.vue'
 
 const store = useChatStore()
+const sidebarCollapsed = inject<Ref<boolean>>('sidebarCollapsed', ref(false))
 const scrollEl = ref<HTMLElement | null>(null)
 
-const suggestions = [
-  { title: '今天有什么重要新闻？', sub: '搜索最新资讯', text: '今天有什么重要新闻？' },
-  { title: '帮我写一个 Python 快速排序', sub: '代码示例', text: '帮我写一个 Python 快速排序算法' },
-  { title: '解释一下量子纠缠', sub: '科学概念', text: '请用简单的语言解释量子纠缠' },
-  { title: '推荐几本科幻小说', sub: '书单推荐', text: '推荐几本经典科幻小说' },
-]
+interface NewsEntry {
+  title: string
+  link: string
+  source: string
+  summary: string
+  published: string
+  timeAgo?: string
+}
+
+const newsItems = ref<NewsEntry[]>([])
+const newsLoading = ref(false)
+
+function timeAgo(iso: string): string {
+  if (!iso) return ''
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return '刚刚'
+  if (mins < 60) return `${mins} 分钟前`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs} 小时前`
+  const days = Math.floor(hrs / 24)
+  return `${days} 天前`
+}
+
+async function loadNews() {
+  if (newsItems.value.length) return
+  newsLoading.value = true
+  try {
+    const res = await fetch('/api/news')
+    if (!res.ok) return
+    const data = await res.json()
+    newsItems.value = (data.items || []).slice(0, 6).map((n: NewsEntry) => ({
+      ...n,
+      timeAgo: timeAgo(n.published),
+    }))
+  } catch { /* ignore */ } finally {
+    newsLoading.value = false
+  }
+}
+
+onMounted(loadNews)
 
 function useSuggestion(text: string) {
   store.sendMessage(text)
@@ -99,6 +160,25 @@ watch(
   align-items: center;
   padding: 0 16px;
   flex-shrink: 0;
+}
+
+.expand-sidebar-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+.expand-sidebar-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .model-selector {
@@ -146,42 +226,122 @@ watch(
   letter-spacing: -0.02em;
 }
 
-.suggestion-grid {
+.news-section {
+  max-width: 640px;
+  width: 100%;
+  margin-top: 20px;
+}
+
+.news-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 10px;
+  padding-left: 4px;
+}
+
+.news-header-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  flex-shrink: 0;
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.news-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
-  margin-top: 8px;
-  max-width: 560px;
-  width: 100%;
 }
 
-.suggestion-btn {
+.news-card {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  padding: 14px 16px;
-  background: var(--bg-input);
-  border: 1px solid rgba(255,255,255,0.08);
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-light);
   border-radius: 12px;
-  color: var(--text-primary);
-  text-align: left;
+  text-decoration: none;
   cursor: pointer;
-  transition: background 0.15s;
-  gap: 2px;
+  transition: background 0.18s, border-color 0.18s, transform 0.18s;
+  min-height: 72px;
 }
-.suggestion-btn:hover {
-  background: rgba(255,255,255,0.1);
+.news-card:hover {
+  background: var(--bg-active);
+  border-color: var(--border);
+  transform: translateY(-1px);
 }
 
-.suggestion-title {
-  font-size: 14px;
+.news-title {
+  font-size: 13.5px;
   font-weight: 500;
   color: var(--text-primary);
+  line-height: 1.45;
+  text-align: left;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-.suggestion-sub {
-  font-size: 12px;
+.news-meta {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  font-size: 11px;
   color: var(--text-muted);
+}
+
+.news-source {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.news-dot {
+  margin: 0 4px;
+  opacity: 0.5;
+}
+
+.news-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 24px;
+}
+
+.news-loading-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: news-bounce 1.4s ease-in-out infinite;
+}
+.news-loading-dot:nth-child(2) { animation-delay: 0.16s; }
+.news-loading-dot:nth-child(3) { animation-delay: 0.32s; }
+
+@keyframes news-bounce {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
+}
+
+@media (max-width: 560px) {
+  .news-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .messages-list {

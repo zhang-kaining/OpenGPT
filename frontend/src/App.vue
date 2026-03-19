@@ -1,5 +1,6 @@
 <template>
-  <div id="app-layout">
+  <LoginPage v-if="!isLoggedIn" @success="onLoginSuccess" />
+  <div v-else id="app-layout">
     <Sidebar />
     <ChatView />
     <MemoryPanel />
@@ -7,16 +8,29 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, ref, provide } from 'vue'
 import { useChatStore } from '@/stores/chat'
+import { initTheme } from '@/composables/useTheme'
+import { isLoggedIn } from '@/composables/useAuth'
+import LoginPage from '@/components/LoginPage.vue'
 import Sidebar from '@/components/Sidebar.vue'
 import ChatView from '@/components/ChatView.vue'
 import MemoryPanel from '@/components/MemoryPanel.vue'
 
 const store = useChatStore()
 
-onMounted(() => {
+const sidebarCollapsed = ref(false)
+provide('sidebarCollapsed', sidebarCollapsed)
+
+function onLoginSuccess() {
   store.loadConversations()
+}
+
+onMounted(() => {
+  initTheme()
+  if (isLoggedIn.value) {
+    store.loadConversations()
+  }
 })
 </script>
 
