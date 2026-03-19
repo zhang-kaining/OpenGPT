@@ -34,7 +34,7 @@ logs/
 *.db
 *.sqlite
 *.sqlite3
-backend/data/*.db
+backend/data/
 
 # =========================
 # Frontend build artifacts
@@ -51,7 +51,3 @@ frontend/.cache/
 Thumbs.db
 .idea/
 .vscode/
-backend/data/mem0/migrations_qdrant/.lock
-backend/data/qdrant/.lock
-.gitignore
-.gitignore
