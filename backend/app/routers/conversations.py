@@ -13,7 +13,10 @@ async def list_conversations(user: dict = Depends(get_current_user)):
 
 @router.post("")
 async def create_conversation(body: ConversationCreate, user: dict = Depends(get_current_user)):
-    return await conv_service.create_conversation(user["id"], body.title)
+    try:
+        return await conv_service.create_conversation(user["id"], body.title, body.folder_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/search")

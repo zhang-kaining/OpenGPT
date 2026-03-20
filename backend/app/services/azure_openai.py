@@ -69,7 +69,7 @@ def _build_initial_tools(enable_search: bool) -> list[dict]:
     if enable_search and settings.tavily_api_key:
         tools.append(search_service.TOOL_DEFINITION)
 
-    # 内置工具：飞书
+    # 内置工具：飞书发消息（写文档为独立 Skill feishu-write-doc）
     if settings.feishu_app_id and settings.feishu_app_secret:
         tools.append(feishu_service.TOOL_DEFINITION)
 
@@ -109,6 +109,7 @@ async def stream_chat(
     # tools 在循环内可动态追加（get_skill_detail 触发后追加该 Skill 的工具）
     tools = _build_initial_tools(enable_search)
     all_citations: list[dict] = []
+    total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     try:
         # 最多 6 轮工具调用（防止死循环）
@@ -117,6 +118,7 @@ async def stream_chat(
                 model=settings.azure_openai_deployment,
                 messages=full_messages,
                 stream=True,
+                stream_options={"include_usage": True},
             )
             if tools:
                 kwargs["tools"] = tools
@@ -129,6 +131,12 @@ async def stream_chat(
             finish_reason = None
 
             async for chunk in response:
+                # 最后一个 chunk 没有 choices 但包含 usage
+                if getattr(chunk, "usage", None):
+                    u = chunk.usage
+                    total_usage["prompt_tokens"] += u.prompt_tokens or 0
+                    total_usage["completion_tokens"] += u.completion_tokens or 0
+                    total_usage["total_tokens"] += u.total_tokens or 0
                 if not chunk.choices:
                     continue
                 choice = chunk.choices[0]
@@ -197,7 +205,7 @@ async def stream_chat(
                     if not any(t["function"]["name"] == new_def["function"]["name"] for t in tools):
                         tools.append(new_def)
 
-        yield {"type": "done", "citations": all_citations}
+        yield {"type": "done", "citations": all_citations, "usage": total_usage}
 
     except Exception as e:
         logger.exception("stream_chat 异常")
@@ -261,7 +269,6 @@ async def _execute_tool(
     elif fn_name == "feishu_send_message":
         content = args.get("content", "")
         sse_events.append({"type": "tool_call", "name": fn_name, "status": "sending"})
-
         result = await feishu_service.send_message(content)
         tool_content = "消息已成功发送到飞书。" if result["success"] else f"发送失败：{result.get('error', '未知错误')}"
 
@@ -285,9 +292,12 @@ async def _execute_tool(
         sse_events.append({"type": "tool_call", "name": fn_name, "status": "running"})
 
         try:
-            result = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: skill_tool.function(**args)
-            )
+            if asyncio.iscoroutinefunction(skill_tool.function):
+                result = await skill_tool.function(**args)
+            else:
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: skill_tool.function(**args)
+                )
             tool_content = str(result)
         except Exception as e:
             logger.error("Skill 工具执行失败 [%s]: %s", fn_name, e)

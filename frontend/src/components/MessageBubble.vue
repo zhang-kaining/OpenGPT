@@ -34,14 +34,12 @@
           <!-- 引用来源 -->
           <CitationList :citations="message.citations" />
 
-          <!-- 操作按钮 -->
+          <!-- 操作按钮 + Token 消耗 -->
           <div v-if="!message.streaming && message.content" class="message-actions">
             <button class="msg-action-btn" :class="{ copied: copied }" title="复制" @click="copyContent">
-              <!-- 复制成功：勾 -->
               <svg v-if="copied" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="20 6 9 17 4 12"/>
               </svg>
-              <!-- 默认：复制图标 -->
               <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
@@ -59,6 +57,14 @@
                 <path d="M17 2h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/>
               </svg>
             </button>
+            <!-- Token 消耗 -->
+            <div v-if="message.usage" class="token-usage" :title="usageDetail">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <polyline points="12 6 12 12 16 14"/>
+              </svg>
+              <span>{{ message.usage.total_tokens }} tokens</span>
+            </div>
           </div>
         </div>
       </template>
@@ -112,6 +118,12 @@ const renderedContent = computed(() => {
   if (!props.message.content) return ''
   const html = md.render(props.message.content)
   return processCitations(html)
+})
+
+const usageDetail = computed(() => {
+  const u = props.message.usage
+  if (!u) return ''
+  return `输入: ${u.prompt_tokens}  输出: ${u.completion_tokens}  合计: ${u.total_tokens}`
 })
 
 async function copyContent() {
@@ -339,5 +351,24 @@ function openImage(src: string) {
 }
 .msg-action-btn.copied {
   color: #19c37d;
+}
+
+.token-usage {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--surface-1);
+  border-radius: 10px;
+  cursor: default;
+  user-select: none;
+  transition: color 0.15s, background 0.15s;
+}
+.token-usage:hover {
+  color: var(--text-secondary);
+  background: var(--bg-hover);
 }
 </style>

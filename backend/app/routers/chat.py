@@ -26,7 +26,10 @@ async def chat(request: Request, body: MessageCreate, user: dict = Depends(get_c
             raise HTTPException(status_code=404, detail="Conversation not found")
         conv_id = body.conversation_id
     else:
-        conv = await conv_service.create_conversation(user_id)
+        try:
+            conv = await conv_service.create_conversation(user_id, folder_id=body.folder_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         conv_id = conv["id"]
 
     # 保存用户消息（仅存文字部分）

@@ -13,7 +13,7 @@ TOKEN_EXPIRE_DAYS = 30
 
 
 async def init_users_table():
-    async with aiosqlite.connect(settings.db_path) as db:
+    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -56,7 +56,7 @@ async def create_user(username: str, password: str, display_name: str = "") -> d
     pw_hash = hash_password(password)
     display = display_name or username
 
-    async with aiosqlite.connect(settings.db_path) as db:
+    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
         await db.execute(
             "INSERT INTO users (id, username, password_hash, display_name, created_at) VALUES (?, ?, ?, ?, ?)",
             (user_id, username, pw_hash, display, now),
@@ -66,8 +66,16 @@ async def create_user(username: str, password: str, display_name: str = "") -> d
     return {"id": user_id, "username": username, "display_name": display}
 
 
+async def count_users() -> int:
+    """当前已注册用户数（用于注册上限）。"""
+    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+        async with db.execute("SELECT COUNT(*) FROM users") as cur:
+            row = await cur.fetchone()
+    return int(row[0]) if row else 0
+
+
 async def get_user_by_username(username: str) -> dict | None:
-    async with aiosqlite.connect(settings.db_path) as db:
+    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM users WHERE username = ?", (username,)) as cur:
             row = await cur.fetchone()
@@ -75,7 +83,7 @@ async def get_user_by_username(username: str) -> dict | None:
 
 
 async def get_user_by_id(user_id: str) -> dict | None:
-    async with aiosqlite.connect(settings.db_path) as db:
+    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM users WHERE id = ?", (user_id,)) as cur:
             row = await cur.fetchone()
@@ -91,13 +99,13 @@ async def change_password(user_id: str, old_password: str, new_password: str) ->
         return False
 
     pw_hash = hash_password(new_password)
-    async with aiosqlite.connect(settings.db_path) as db:
+    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
         await db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (pw_hash, user_id))
         await db.commit()
     return True
 
 
 async def update_display_name(user_id: str, display_name: str):
-    async with aiosqlite.connect(settings.db_path) as db:
+    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
         await db.execute("UPDATE users SET display_name = ? WHERE id = ?", (display_name, user_id))
         await db.commit()

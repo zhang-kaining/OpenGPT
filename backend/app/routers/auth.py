@@ -1,9 +1,11 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
+from app.config import get_settings
 from app.services import auth as auth_service
 from app.deps import get_current_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+settings = get_settings()
 
 
 class RegisterBody(BaseModel):
@@ -32,6 +34,14 @@ async def register(body: RegisterBody):
     existing = await auth_service.get_user_by_username(body.username)
     if existing:
         raise HTTPException(409, "用户名已存在")
+
+    if settings.max_registered_users > 0:
+        n = await auth_service.count_users()
+        if n >= settings.max_registered_users:
+            raise HTTPException(
+                403,
+                f"注册人数已达上限（最多 {settings.max_registered_users} 人），请联系管理员",
+            )
 
     user = await auth_service.create_user(body.username, body.password, body.display_name)
     token = auth_service.create_token(user["id"], user["username"])

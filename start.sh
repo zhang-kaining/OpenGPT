@@ -3,33 +3,95 @@
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 PID_FILE="$ROOT/.pids"
 LOG_DIR="$ROOT/logs"
+EMBEDDING_GATEWAY_PORT="${EMBEDDING_GATEWAY_PORT:-8101}"
+QDRANT_DIR="$ROOT/backend/data/qdrant"
+QDRANT_BACKUP_DIR="$ROOT/backend/data/backups"
 
 # ---- 帮助 ----
 usage() {
-  echo "用法: $0 [start|stop|restart|status|logs]"
+  echo "用法: $0 [start|stop|restart|status|logs|backup]"
   echo "  start    启动服务（前台）"
   echo "  start -d 后台运行"
   echo "  stop     停止后台服务"
   echo "  restart  重启后台服务"
   echo "  status   查看运行状态"
   echo "  logs     实时查看日志"
+  echo "  backup   立即备份 qdrant 数据"
+}
+
+# ---- 备份 qdrant ----
+backup_qdrant() {
+  local data_dir="$ROOT/backend/data"
+  local qdrant_dirs
+  qdrant_dirs=$(ls -1d "$data_dir"/qdrant* 2>/dev/null | xargs -n1 basename 2>/dev/null)
+  if [ -z "$qdrant_dirs" ]; then
+    echo "[备份] 未找到 qdrant* 数据目录，跳过"
+    return 0
+  fi
+
+  mkdir -p "$QDRANT_BACKUP_DIR"
+  local ts
+  ts="$(date +%Y%m%d-%H%M%S)"
+  local out="$QDRANT_BACKUP_DIR/qdrant-all-$ts.tar.gz"
+
+  if tar -C "$data_dir" -czf "$out" $qdrant_dirs 2>/dev/null; then
+    echo "[备份] 已创建: $out"
+  else
+    echo "[备份] 创建失败"
+    return 1
+  fi
+
+  # 仅保留最近 10 份，避免占满磁盘
+  local old_files
+  old_files="$(ls -1t "$QDRANT_BACKUP_DIR"/qdrant-*.tar.gz "$QDRANT_BACKUP_DIR"/qdrant-all-*.tar.gz 2>/dev/null | awk 'NR>10')"
+  if [ -n "$old_files" ]; then
+    echo "$old_files" | xargs rm -f
+    echo "[备份] 已清理旧备份（保留最近 10 份）"
+  fi
 }
 
 # ---- 停止 ----
 stop_services() {
-  if [ ! -f "$PID_FILE" ]; then
-    echo "没有找到运行中的服务"
-    return 0
+  local found=false
+
+  # 1. 先按 .pids 文件杀（连子进程一起）
+  if [ -f "$PID_FILE" ]; then
+    echo "停止服务..."
+    while IFS= read -r pid; do
+      if kill -0 "$pid" 2>/dev/null; then
+        # 先优雅停止，给本地 qdrant 落盘时间
+        kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null
+        echo "  已发送停止信号 PID $pid"
+        found=true
+      fi
+    done < "$PID_FILE"
+    rm -f "$PID_FILE"
+    # 等待进程优雅退出
+    sleep 2
   fi
-  echo "停止服务..."
-  while IFS= read -r pid; do
-    if kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null
-      echo "  已停止 PID $pid"
+
+  # 2. 兜底：按端口清理残留进程（先 TERM，仍存活再 KILL）
+  for port in 8000 5173 "$EMBEDDING_GATEWAY_PORT"; do
+    local pids
+    pids=$(lsof -ti :"$port" 2>/dev/null)
+    if [ -n "$pids" ]; then
+      echo "$pids" | xargs kill 2>/dev/null
+      sleep 1
+      local remain
+      remain=$(lsof -ti :"$port" 2>/dev/null)
+      if [ -n "$remain" ]; then
+        echo "$remain" | xargs kill -9 2>/dev/null
+      fi
+      echo "  已清理端口 $port 残留进程（优雅+兜底）"
+      found=true
     fi
-  done < "$PID_FILE"
-  rm -f "$PID_FILE"
-  echo "✅ 已停止"
+  done
+
+  if [ "$found" = true ]; then
+    echo "✅ 已停止"
+  else
+    echo "没有找到运行中的服务"
+  fi
 }
 
 # ---- 状态 ----
@@ -53,6 +115,7 @@ start_services() {
   local daemon=$1
 
   echo "=== 启动 MyGPT ==="
+  backup_qdrant
 
   # 后端
   cd "$ROOT/backend"
@@ -77,8 +140,15 @@ start_services() {
     npm install
   fi
 
+  mkdir -p "$LOG_DIR"
+
+  # Embedding Gateway（独立 OpenAI 兼容向量网关）
+  cd "$ROOT/backend"
+  nohup .venv/bin/uvicorn embedding_gateway.main:app --host 0.0.0.0 --port "$EMBEDDING_GATEWAY_PORT" \
+    > "$LOG_DIR/embedding-gateway.log" 2>&1 &
+  GATEWAY_PID=$!
+
   if [ "$daemon" = "true" ]; then
-    mkdir -p "$LOG_DIR"
     cd "$ROOT/backend"
     nohup .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 \
       > "$LOG_DIR/backend.log" 2>&1 &
@@ -101,12 +171,14 @@ start_services() {
 
     echo "$BACKEND_PID" > "$PID_FILE"
     echo "$FRONTEND_PID" >> "$PID_FILE"
+    echo "$GATEWAY_PID" >> "$PID_FILE"
 
     sleep 1
     echo ""
     echo "✅ 后台启动完成！"
     echo "   前端: http://localhost:5173"
     echo "   后端: http://localhost:8000"
+    echo "   向量网关: http://localhost:$EMBEDDING_GATEWAY_PORT/v1/embeddings"
     echo "   日志: $LOG_DIR/"
     echo ""
     echo "查看日志: bash start.sh logs"
@@ -124,10 +196,11 @@ start_services() {
     echo "✅ 启动完成！"
     echo "   前端: http://localhost:5173"
     echo "   后端: http://localhost:8000"
+    echo "   向量网关: http://localhost:$EMBEDDING_GATEWAY_PORT/v1/embeddings"
     echo ""
     echo "按 Ctrl+C 停止所有服务"
 
-    trap "kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit" INT TERM
+    trap "kill $BACKEND_PID $FRONTEND_PID $GATEWAY_PID 2>/dev/null; exit" INT TERM
     wait
   fi
 }
@@ -162,7 +235,12 @@ case "$CMD" in
     tail -f "$LOG_DIR/backend.log" &
     echo "=== 前端日志 ($LOG_DIR/frontend.log) ==="
     tail -f "$LOG_DIR/frontend.log" &
+    echo "=== 向量网关日志 ($LOG_DIR/embedding-gateway.log) ==="
+    tail -f "$LOG_DIR/embedding-gateway.log" &
     wait
+    ;;
+  backup)
+    backup_qdrant
     ;;
   *)
     usage
@@ -185,7 +263,7 @@ esac
 # bash start.sh status
 
 # # 实时查看日志
-# bash start.sh logs
+# bash start.sh logsbash start.sh start -d
 
 # # 前台运行（调试用，Ctrl+C 停止）
 # bash start.sh start

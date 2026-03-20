@@ -1,4 +1,4 @@
-import type { Conversation, Message, MemoryItem, Citation } from '@/types'
+import type { Conversation, ConversationFolder, Message, MemoryItem, Citation } from '@/types'
 import { getAuthHeaders, clearAuth } from '@/composables/useAuth'
 
 const BASE = '/api'
@@ -61,11 +61,11 @@ export async function listConversations(): Promise<Conversation[]> {
   return res.json()
 }
 
-export async function createConversation(title?: string): Promise<Conversation> {
+export async function createConversation(title?: string, folderId?: string | null): Promise<Conversation> {
   const res = await authFetch(`${BASE}/conversations`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({ title, folder_id: folderId ?? null }),
   })
   return res.json()
 }
@@ -92,6 +92,34 @@ export async function searchConversations(q: string): Promise<Conversation[]> {
   return res.json()
 }
 
+// ---- Folders ----
+
+export async function listFolders(): Promise<ConversationFolder[]> {
+  const res = await authFetch(`${BASE}/folders`)
+  return res.json()
+}
+
+export async function createFolder(name: string, parentId?: string | null): Promise<ConversationFolder> {
+  const res = await authFetch(`${BASE}/folders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, parent_id: parentId ?? null }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function deleteFolder(id: string) {
+  const res = await authFetch(`${BASE}/folders/${id}`, { method: 'DELETE' })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || `HTTP ${res.status}`)
+  }
+}
+
 // ---- Memory ----
 
 export async function getMemories(): Promise<MemoryItem[]> {
@@ -111,7 +139,7 @@ export interface ChatCallbacks {
   onSearching?: (query: string) => void
   onSearchResults?: (results: Citation[]) => void
   onToolCall?: (name: string, status: string) => void
-  onDone?: (citations: Citation[]) => void
+  onDone?: (citations: Citation[], usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }) => void
   onError?: (message: string) => void
 }
 
@@ -121,7 +149,8 @@ export async function sendMessage(
   enableSearch: boolean,
   callbacks: ChatCallbacks,
   signal?: AbortSignal,
-  images?: string[]
+  images?: string[],
+  folderId?: string | null,
 ) {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -132,6 +161,7 @@ export async function sendMessage(
     body: JSON.stringify({
       content,
       conversation_id: conversationId,
+      folder_id: conversationId ? undefined : folderId ?? undefined,
       enable_search: enableSearch,
       images: images?.length ? images : undefined,
     }),
@@ -186,7 +216,7 @@ export async function sendMessage(
             callbacks.onToolCall?.(event.name, event.status)
             break
           case 'done':
-            callbacks.onDone?.(event.citations ?? [])
+            callbacks.onDone?.(event.citations ?? [], event.usage)
             break
           case 'error':
             callbacks.onError?.(event.message)

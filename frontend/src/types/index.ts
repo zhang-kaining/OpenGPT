@@ -6,6 +6,12 @@ export interface Citation {
   score?: number
 }
 
+export interface TokenUsage {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+}
+
 export interface Message {
   id: string
   conversation_id: string
@@ -13,6 +19,7 @@ export interface Message {
   content: string
   images?: string[]        // base64 data URLs，仅用户消息
   citations?: Citation[] | null
+  usage?: TokenUsage | null
   created_at: string
   // 流式状态
   streaming?: boolean
@@ -24,6 +31,15 @@ export interface Message {
 export interface Conversation {
   id: string
   title: string
+  created_at: string
+  updated_at: string
+  folder_id?: string | null
+}
+
+export interface ConversationFolder {
+  id: string
+  parent_id: string | null
+  name: string
   created_at: string
   updated_at: string
 }

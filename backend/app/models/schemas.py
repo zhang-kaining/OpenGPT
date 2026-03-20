@@ -6,6 +6,7 @@ from datetime import datetime
 class MessageCreate(BaseModel):
     content: str
     conversation_id: Optional[str] = None
+    folder_id: Optional[str] = None  # 新建对话时归入该文件夹
     enable_search: bool = True
     images: Optional[list[str]] = None  # base64 data URLs, e.g. "data:image/png;base64,..."
 
@@ -21,6 +22,7 @@ class Message(BaseModel):
 
 class ConversationCreate(BaseModel):
     title: Optional[str] = None
+    folder_id: Optional[str] = None
 
 
 class Conversation(BaseModel):
@@ -28,6 +30,12 @@ class Conversation(BaseModel):
     title: str
     created_at: datetime
     updated_at: datetime
+    folder_id: Optional[str] = None
+
+
+class FolderCreate(BaseModel):
+    name: str
+    parent_id: Optional[str] = None
 
 
 class Citation(BaseModel):

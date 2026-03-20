@@ -1,10 +1,14 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Conversation, Message, MemoryItem, Citation } from '@/types'
+import type { Conversation, ConversationFolder, Message, MemoryItem, Citation } from '@/types'
 import * as api from '@/services/api'
 
 export const useChatStore = defineStore('chat', () => {
   const conversations = ref<Conversation[]>([])
+  const folders = ref<ConversationFolder[]>([])
+  /** 新建对话（尚无 conv_id）时归入的文件夹；顶部「新对话」会置空 */
+  const pendingFolderId = ref<string | null>(null)
+  const expandedFolderIds = ref<Set<string>>(new Set())
   const currentConvId = ref<string | null>(null)
   const messages = ref<Message[]>([])
   const memories = ref<MemoryItem[]>([])
@@ -28,6 +32,46 @@ export const useChatStore = defineStore('chat', () => {
     conversations.value = await api.listConversations()
   }
 
+  async function loadFolders() {
+    folders.value = await api.listFolders()
+  }
+
+  async function refreshSidebar() {
+    await Promise.all([loadConversations(), loadFolders()])
+  }
+
+  function toggleFolderExpanded(id: string) {
+    const next = new Set(expandedFolderIds.value)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    expandedFolderIds.value = next
+  }
+
+  async function createFolderByName(name: string, parentId?: string | null) {
+    await api.createFolder(name, parentId)
+    await loadFolders()
+    if (parentId) {
+      const next = new Set(expandedFolderIds.value)
+      next.add(parentId)
+      expandedFolderIds.value = next
+    }
+  }
+
+  async function removeFolder(id: string) {
+    try {
+      await api.deleteFolder(id)
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : '删除文件夹失败')
+      return
+    }
+    await refreshSidebar()
+    const still = conversations.value.some(c => c.id === currentConvId.value)
+    if (!still) {
+      currentConvId.value = null
+      messages.value = []
+    }
+  }
+
   async function selectConversation(id: string) {
     if (id === currentConvId.value) return
     currentConvId.value = id
@@ -35,8 +79,16 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function newConversation() {
+    pendingFolderId.value = null
     currentConvId.value = null
     messages.value = []
+  }
+
+  function newConversationInFolder(folderId: string) {
+    pendingFolderId.value = folderId
+    currentConvId.value = null
+    messages.value = []
+    if (!expandedFolderIds.value.has(folderId)) toggleFolderExpanded(folderId)
   }
 
   async function deleteConversation(id: string) {
@@ -96,15 +148,18 @@ export const useChatStore = defineStore('chat', () => {
         enableSearch.value,
         {
           onConvId(convId) {
+            const folderForConv = pendingFolderId.value
             messages.value[aiIdx].conversation_id = convId
             messages.value[userIdx].conversation_id = convId
             if (!currentConvId.value) {
+              pendingFolderId.value = null
               currentConvId.value = convId
               const newConv: Conversation = {
                 id: convId,
                 title: content.slice(0, 30),
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
+                folder_id: folderForConv ?? null,
               }
               conversations.value.unshift(newConv)
             }
@@ -128,8 +183,9 @@ export const useChatStore = defineStore('chat', () => {
             messages.value[aiIdx].toolCall = labels[name] ?? '正在调用工具...'
             messages.value[aiIdx].searching = false
           },
-          onDone(citations) {
+          onDone(citations, usage) {
             messages.value[aiIdx].citations = citations.length > 0 ? citations : null
+            messages.value[aiIdx].usage = usage ?? null
             messages.value[aiIdx].streaming = false
             messages.value[aiIdx].searching = false
             isLoading.value = false
@@ -147,7 +203,8 @@ export const useChatStore = defineStore('chat', () => {
           },
         },
         currentAbort.signal,
-        images
+        images,
+        pendingFolderId.value,
       )
     } catch (e: any) {
       if (e?.name !== 'AbortError') {
@@ -184,6 +241,9 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     conversations,
+    folders,
+    pendingFolderId,
+    expandedFolderIds,
     currentConvId,
     messages,
     memories,
@@ -194,8 +254,14 @@ export const useChatStore = defineStore('chat', () => {
     currentConversation,
     filteredConversations,
     loadConversations,
+    loadFolders,
+    refreshSidebar,
+    toggleFolderExpanded,
+    createFolderByName,
+    removeFolder,
     selectConversation,
     newConversation,
+    newConversationInFolder,
     deleteConversation,
     renameConversation,
     sendMessage,

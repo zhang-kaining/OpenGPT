@@ -4,6 +4,8 @@
     <Sidebar />
     <ChatView />
     <MemoryPanel />
+    <ConfirmDialog />
+    <PromptDialog />
   </div>
 </template>
 
@@ -16,6 +18,8 @@ import LoginPage from '@/components/LoginPage.vue'
 import Sidebar from '@/components/Sidebar.vue'
 import ChatView from '@/components/ChatView.vue'
 import MemoryPanel from '@/components/MemoryPanel.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import PromptDialog from '@/components/PromptDialog.vue'
 
 const store = useChatStore()
 
@@ -23,13 +27,13 @@ const sidebarCollapsed = ref(false)
 provide('sidebarCollapsed', sidebarCollapsed)
 
 function onLoginSuccess() {
-  store.loadConversations()
+  store.refreshSidebar()
 }
 
 onMounted(() => {
   initTheme()
   if (isLoggedIn.value) {
-    store.loadConversations()
+    store.refreshSidebar()
   }
 })
 </script>

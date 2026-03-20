@@ -13,6 +13,16 @@
           <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
         </svg>
       </button>
+      <button
+        class="icon-btn"
+        title="新建文件夹"
+        @click="newRootFolder"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          <line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/>
+        </svg>
+      </button>
       <button class="icon-btn new-chat-icon" title="新对话" @click="store.newConversation()">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M12 5v14M5 12h14"/>
@@ -42,45 +52,91 @@
 
     <!-- 对话列表 -->
     <div class="conv-list">
-      <div v-if="!store.searchQuery" class="conv-section-label">聊天记录</div>
-      <div
-        v-for="conv in store.filteredConversations"
-        :key="conv.id"
-        class="conv-item"
-        :class="{ active: conv.id === store.currentConvId }"
-        @click="store.selectConversation(conv.id)"
-      >
-        <span v-if="editingId !== conv.id" class="conv-title">{{ conv.title }}</span>
-        <input
-          v-else
-          ref="editInput"
-          v-model="editTitle"
-          class="conv-edit-input"
-          @blur="saveEdit(conv.id)"
-          @keyup.enter="saveEdit(conv.id)"
-          @keyup.escape="cancelEdit"
-          @click.stop
-        />
-        <div class="conv-actions" @click.stop>
-          <button class="action-btn" title="重命名" @click="startEdit(conv)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-            </svg>
-          </button>
-          <button class="action-btn danger" title="删除" @click="confirmDelete(conv.id)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="3 6 5 6 21 6"/>
-              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-              <path d="M10 11v6M14 11v6"/>
-              <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-            </svg>
-          </button>
+      <template v-if="store.searchQuery">
+        <div class="conv-section-label">搜索结果</div>
+        <div
+          v-for="conv in store.filteredConversations"
+          :key="conv.id"
+          class="conv-item"
+          :class="{ active: conv.id === store.currentConvId }"
+          @click="store.selectConversation(conv.id)"
+        >
+          <span v-if="editingId !== conv.id" class="conv-title">{{ conv.title }}</span>
+          <input
+            v-else
+            ref="editInput"
+            v-model="editTitle"
+            class="conv-edit-input"
+            @blur="saveEdit(conv.id)"
+            @keyup.enter="saveEdit(conv.id)"
+            @keyup.escape="cancelEdit"
+            @click.stop
+          />
+          <div class="conv-actions" @click.stop>
+            <button class="action-btn" title="重命名" @click="startEdit(conv)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+            </button>
+            <button class="action-btn danger" title="删除" @click="confirmDelete(conv.id)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                <path d="M10 11v6M14 11v6"/>
+                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+              </svg>
+            </button>
+          </div>
         </div>
-      </div>
-      <div v-if="store.filteredConversations.length === 0" class="empty-hint">
-        {{ store.searchQuery ? '没有匹配的对话' : '' }}
-      </div>
+        <div v-if="store.filteredConversations.length === 0" class="empty-hint">没有匹配的对话</div>
+      </template>
+      <template v-else>
+        <div class="conv-section-label">文件夹</div>
+        <SidebarFolderBranch :parent-id="null" :depth="0" />
+        <div class="conv-section-label">未分类对话</div>
+        <div
+          v-for="conv in rootConversations"
+          :key="conv.id"
+          class="conv-item"
+          :class="{ active: conv.id === store.currentConvId }"
+          @click="store.selectConversation(conv.id)"
+        >
+          <span v-if="editingId !== conv.id" class="conv-title">{{ conv.title }}</span>
+          <input
+            v-else
+            ref="editInput"
+            v-model="editTitle"
+            class="conv-edit-input"
+            @blur="saveEdit(conv.id)"
+            @keyup.enter="saveEdit(conv.id)"
+            @keyup.escape="cancelEdit"
+            @click.stop
+          />
+          <div class="conv-actions" @click.stop>
+            <button class="action-btn" title="重命名" @click="startEdit(conv)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+            </button>
+            <button class="action-btn danger" title="删除" @click="confirmDelete(conv.id)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                <path d="M10 11v6M14 11v6"/>
+                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div
+          v-if="rootConversations.length === 0 && store.folders.length === 0"
+          class="empty-hint"
+        >
+          暂无对话，点击 + 开始
+        </div>
+      </template>
     </div>
 
     <!-- 底部用户区域 -->
@@ -110,20 +166,42 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, watch, inject } from 'vue'
+import { ref, computed, nextTick, watch, inject } from 'vue'
 import type { Ref } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { currentUser, clearAuth } from '@/composables/useAuth'
 import type { Conversation } from '@/types'
 import SettingsPanel from './SettingsPanel.vue'
+import SidebarFolderBranch from './SidebarFolderBranch.vue'
+import { openConfirm, openPrompt } from '@/composables/useConfirmDialog'
 
 const showSettings = ref(false)
 
 const store = useChatStore()
 const isCollapsed = inject<Ref<boolean>>('sidebarCollapsed', ref(false))
 
-function logout() {
-  if (confirm('确定退出登录？')) {
+const rootConversations = computed(() =>
+  store.filteredConversations.filter(c => c.folder_id == null || c.folder_id === ''),
+)
+
+async function newRootFolder() {
+  const name = await openPrompt({ title: '新建文件夹', placeholder: '文件夹名称', defaultValue: '' })
+  if (!name) return
+  try {
+    await store.createFolderByName(name, null)
+  } catch (e: unknown) {
+    alert(e instanceof Error ? e.message : '创建失败')
+  }
+}
+
+async function logout() {
+  const ok = await openConfirm({
+    title: '退出登录',
+    message: '确定要退出当前账号吗？',
+    danger: false,
+    confirmText: '退出',
+  })
+  if (ok) {
     clearAuth()
     window.location.reload()
   }
@@ -156,10 +234,13 @@ async function saveEdit(id: string) {
   editingId.value = null
 }
 
-function confirmDelete(id: string) {
-  if (confirm('确定删除这个对话吗？')) {
-    store.deleteConversation(id)
-  }
+async function confirmDelete(id: string) {
+  const ok = await openConfirm({
+    title: '删除对话',
+    message: '确定删除这条对话吗？删除后无法恢复。',
+    confirmText: '删除',
+  })
+  if (ok) store.deleteConversation(id)
 }
 
 function openMemory() {

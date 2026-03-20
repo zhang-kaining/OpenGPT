@@ -35,10 +35,18 @@ class Settings(BaseSettings):
     feishu_app_id: str = ""
     feishu_app_secret: str = ""
     feishu_default_open_id: str = ""   # 填入后即可发消息给自己
+    feishu_default_folder_token: str = ""  # 个人空间下某文件夹 token，文档将创建在此；不填则创建到应用默认空间
+    feishu_wiki_node_token: str = ""  # 知识库页面 node token（URL 里 /wiki/ 后面的那串），配置后「写文档」将追加到该 Wiki 页
+    feishu_wiki_base_url: str = ""  # 知识库访问域名，如 https://ocnxxel690ii.feishu.cn，返回的 Wiki 链接会用此域名；不填则用 open.feishu.cn（可能打不开）
 
     user_id: str = "default_user"
 
+    # 注册人数上限；0 表示不限制。默认 1 与此前「仅开放一个账号」一致
+    max_registered_users: int = 1
+
     db_path: str = "data/chat.db"
+    # 与同步 sqlite3 共用 chat.db 时避免瞬时 database is locked
+    sqlite_timeout_seconds: float = 30.0
 
 
 @lru_cache

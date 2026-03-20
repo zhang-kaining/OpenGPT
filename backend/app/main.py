@@ -8,7 +8,8 @@ from app.services.conversation import init_db
 from app.services.auth import init_users_table
 from app.services.skill_manager import get_skill_manager
 from app.services.mcp_manager import get_mcp_manager
-from app.routers import auth, chat, conversations, memory, news, skills
+from app.routers import auth, chat, conversations, folders, memory, news, skills
+from app.services import feishu as feishu_service
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -37,6 +38,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(conversations.router)
+app.include_router(folders.router)
 app.include_router(memory.router)
 app.include_router(news.router)
 app.include_router(skills.router)
@@ -45,3 +47,14 @@ app.include_router(skills.router)
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/feishu/permissions")
+async def feishu_permissions():
+    """查询当前飞书应用信息与权限相关接口返回（用于排查写文档 403）。需已配置 FEISHU_APP_ID/SECRET。"""
+    if not feishu_service.settings.feishu_app_id or not feishu_service.settings.feishu_app_secret:
+        return {"error": "未配置飞书应用"}
+    try:
+        return await feishu_service.get_app_permissions_info()
+    except Exception as e:
+        return {"error": str(e)}
