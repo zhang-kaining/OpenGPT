@@ -56,6 +56,32 @@ async function waitHealth(url, timeoutMs = 90000) {
   throw new Error(`health check timeout: ${url}`)
 }
 
+/** 避免 8000 已被「无 MYGPT_STATIC_DIR」的旧后端占用：/api/health 正常但 / 会返回 {"detail":"Not Found"} */
+async function verifySpaRoot(apiPort, timeoutMs = 30000) {
+  const url = `http://127.0.0.1:${apiPort}/`
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(url, {
+        redirect: 'follow',
+        signal: AbortSignal.timeout(3000),
+      })
+      const ct = (res.headers.get('content-type') || '').toLowerCase()
+      const text = await res.text()
+      if (res.status === 404 && (text.includes('"Not Found"') || text.includes("'Not Found'"))) {
+        throw new Error('SPA_ROOT_CHECK_FAILED')
+      }
+      const looksLikeHtml =
+        ct.includes('text/html') || /^\s*</.test(text) || text.includes('<!doctype')
+      if (res.ok && looksLikeHtml && !text.trimStart().startsWith('{')) return
+    } catch (_) {
+      /* 子进程刚起，再等 */
+    }
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  throw new Error('SPA_ROOT_CHECK_FAILED')
+}
+
 async function bootstrap() {
   const root = path.resolve(__dirname, '..')
   const backendRoot = path.join(root, 'backend')
@@ -103,11 +129,16 @@ async function bootstrap() {
 
   try {
     await waitHealth(`http://127.0.0.1:${apiPort}/api/health`)
-  } catch {
-    await dialog.showErrorBox(
-      'MyGPT',
-      '主服务启动超时。\n请检查 backend/.env、依赖是否完整，或在终端手动运行 uvicorn 查看报错。',
-    )
+    await verifySpaRoot(apiPort)
+  } catch (e) {
+    const msg =
+      e && e.message === 'SPA_ROOT_CHECK_FAILED'
+        ? `首页不是前端页面（常见原因：${apiPort} 端口已被占用）。\n` +
+          '请先停止其它后端，例如：在项目根目录执行 bash start.sh stop\n' +
+          '或改用其它端口：export MYGPT_API_PORT=8001 后再 npm start\n' +
+          '并确认已执行：cd frontend && npm run build'
+        : '主服务启动超时。\n请检查 backend/.env、依赖是否完整，或在终端手动运行 uvicorn 查看报错。'
+    await dialog.showErrorBox('MyGPT', msg)
     killAllChildren()
     app.quit()
     return

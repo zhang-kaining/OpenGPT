@@ -10,6 +10,8 @@
 
 ## 第一次
 
+**请先停掉占用 8000 / 8101 的进程**（例如曾运行过 `bash start.sh start -d`），否则 Electron 连到的可能是「没带静态前端」的旧后端，窗口里只会看到 `{"detail":"Not Found"}`。可先：`bash start.sh stop`。
+
 ```bash
 cd desktop
 npm install
