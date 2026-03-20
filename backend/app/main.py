@@ -1,7 +1,9 @@
 import logging
+import os
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.services.conversation import init_db
@@ -61,3 +63,9 @@ async def feishu_permissions():
         return await feishu_service.get_app_permissions_info()
     except Exception as e:
         return {"error": str(e)}
+
+
+# 桌面 / 单端口部署：设置 MYGPT_STATIC_DIR 为 frontend 构建目录（含 index.html）
+_static = os.environ.get("MYGPT_STATIC_DIR", "").strip()
+if _static and os.path.isdir(_static):
+    app.mount("/", StaticFiles(directory=_static, html=True), name="spa")
