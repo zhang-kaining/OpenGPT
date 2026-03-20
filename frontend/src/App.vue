@@ -2,7 +2,8 @@
   <LoginPage v-if="!isLoggedIn" @success="onLoginSuccess" />
   <div v-else id="app-layout">
     <Sidebar />
-    <ChatView />
+    <ChatView v-show="currentView === 'chat'" />
+    <NoteView v-if="currentView === 'notes'" />
     <MemoryPanel />
     <ConfirmDialog />
     <PromptDialog />
@@ -17,6 +18,7 @@ import { isLoggedIn } from '@/composables/useAuth'
 import LoginPage from '@/components/LoginPage.vue'
 import Sidebar from '@/components/Sidebar.vue'
 import ChatView from '@/components/ChatView.vue'
+import NoteView from '@/views/NoteView.vue'
 import MemoryPanel from '@/components/MemoryPanel.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import PromptDialog from '@/components/PromptDialog.vue'
@@ -25,6 +27,9 @@ const store = useChatStore()
 
 const sidebarCollapsed = ref(false)
 provide('sidebarCollapsed', sidebarCollapsed)
+
+const currentView = ref<'chat' | 'notes'>('chat')
+provide('currentView', currentView)
 
 function onLoginSuccess() {
   store.refreshSidebar()

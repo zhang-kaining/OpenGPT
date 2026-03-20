@@ -49,3 +49,23 @@ class MemoryItem(BaseModel):
     id: str
     memory: str
     created_at: Optional[str] = None
+
+
+class NoteFolderCreate(BaseModel):
+    name: str
+    parent_id: Optional[str] = None
+
+
+class NoteCreate(BaseModel):
+    title: str = "未命名"
+    folder_id: Optional[str] = None
+    content: Optional[str] = ""
+
+
+class NoteSave(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+
+
+class AiRefineRequest(BaseModel):
+    prompt: Optional[str] = None

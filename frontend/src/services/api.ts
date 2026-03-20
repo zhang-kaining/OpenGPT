@@ -1,4 +1,4 @@
-import type { Conversation, ConversationFolder, Message, MemoryItem, Citation } from '@/types'
+import type { Conversation, ConversationFolder, Message, MemoryItem, Citation, Note, NoteFolder } from '@/types'
 import { getAuthHeaders, clearAuth } from '@/composables/useAuth'
 
 const BASE = '/api'
@@ -117,6 +117,113 @@ export async function deleteFolder(id: string) {
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
     throw new Error(data.detail || `HTTP ${res.status}`)
+  }
+}
+
+// ---- Note Folders ----
+
+export async function listNoteFolders(): Promise<NoteFolder[]> {
+  const res = await authFetch(`${BASE}/note-folders`)
+  return res.json()
+}
+
+export async function createNoteFolder(name: string, parentId?: string | null): Promise<NoteFolder> {
+  const res = await authFetch(`${BASE}/note-folders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, parent_id: parentId ?? null }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function deleteNoteFolder(id: string) {
+  const res = await authFetch(`${BASE}/note-folders/${id}`, { method: 'DELETE' })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || `HTTP ${res.status}`)
+  }
+}
+
+// ---- Notes ----
+
+export async function listNotes(): Promise<Note[]> {
+  const res = await authFetch(`${BASE}/notes`)
+  return res.json()
+}
+
+export async function createNote(title?: string, folderId?: string | null): Promise<Note> {
+  const res = await authFetch(`${BASE}/notes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: title || '未命名', folder_id: folderId ?? null }),
+  })
+  return res.json()
+}
+
+export async function getNote(id: string): Promise<Note> {
+  const res = await authFetch(`${BASE}/notes/${id}`)
+  return res.json()
+}
+
+export async function saveNote(id: string, title: string, content: string) {
+  await authFetch(`${BASE}/notes/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, content }),
+  })
+}
+
+export async function deleteNote(id: string) {
+  await authFetch(`${BASE}/notes/${id}`, { method: 'DELETE' })
+}
+
+export interface AiRefineCallbacks {
+  onToken?: (token: string) => void
+  onDone?: () => void
+  onError?: (msg: string) => void
+}
+
+export async function aiRefineNote(
+  noteId: string,
+  prompt: string | undefined,
+  callbacks: AiRefineCallbacks,
+  signal?: AbortSignal,
+) {
+  const res = await authFetch(`${BASE}/notes/${noteId}/ai-refine`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: prompt || null }),
+    ...(signal ? { signal } : {}),
+  })
+  if (!res.ok) {
+    callbacks.onError?.(`HTTP ${res.status}`)
+    return
+  }
+  const reader = res.body!.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue
+      const raw = line.slice(6).trim()
+      if (raw === '[DONE]') return
+      if (!raw) continue
+      try {
+        const event = JSON.parse(raw)
+        if (event.type === 'token') callbacks.onToken?.(event.content)
+        else if (event.type === 'done') callbacks.onDone?.()
+        else if (event.type === 'error') callbacks.onError?.(event.message)
+      } catch { /* ignore */ }
+    }
   }
 }
 

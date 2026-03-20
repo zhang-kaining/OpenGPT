@@ -6,9 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.services.conversation import init_db
 from app.services.auth import init_users_table
+from app.services.note import init_note_tables
 from app.services.skill_manager import get_skill_manager
 from app.services.mcp_manager import get_mcp_manager
-from app.routers import auth, chat, conversations, folders, memory, news, skills
+from app.routers import auth, chat, conversations, folders, memory, news, notes, skills
 from app.services import feishu as feishu_service
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -18,6 +19,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 async def lifespan(app: FastAPI):
     await init_db()
     await init_users_table()
+    await init_note_tables()
     # 加载 Skills
     get_skill_manager().load()
     # 加载 MCP（异步，失败不影响启动）
@@ -41,6 +43,7 @@ app.include_router(conversations.router)
 app.include_router(folders.router)
 app.include_router(memory.router)
 app.include_router(news.router)
+app.include_router(notes.router)
 app.include_router(skills.router)
 
 

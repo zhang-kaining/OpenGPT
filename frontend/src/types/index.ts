@@ -49,3 +49,20 @@ export interface MemoryItem {
   memory: string
   created_at?: string
 }
+
+export interface NoteFolder {
+  id: string
+  parent_id: string | null
+  name: string
+  created_at: string
+  updated_at: string
+}
+
+export interface Note {
+  id: string
+  folder_id: string | null
+  title: string
+  content?: string
+  created_at: string
+  updated_at: string
+}
