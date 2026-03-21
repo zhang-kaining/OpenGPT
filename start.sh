@@ -4,6 +4,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 PID_FILE="$ROOT/.pids"
 LOG_DIR="$ROOT/logs"
 EMBEDDING_GATEWAY_PORT="${EMBEDDING_GATEWAY_PORT:-8101}"
+OpenGPT_API_PORT="${OpenGPT_API_PORT:-18789}"
 QDRANT_DIR="$ROOT/backend/data/qdrant"
 QDRANT_BACKUP_DIR="$ROOT/backend/data/backups"
 
@@ -71,7 +72,7 @@ stop_services() {
   fi
 
   # 2. 兜底：按端口清理残留进程（先 TERM，仍存活再 KILL）
-  for port in 8000 5173 "$EMBEDDING_GATEWAY_PORT"; do
+  for port in "$OpenGPT_API_PORT" 5173 "$EMBEDDING_GATEWAY_PORT"; do
     local pids
     pids=$(lsof -ti :"$port" 2>/dev/null)
     if [ -n "$pids" ]; then
@@ -150,7 +151,7 @@ start_services() {
 
   if [ "$daemon" = "true" ]; then
     cd "$ROOT/backend"
-    nohup .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 \
+    nohup .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port "$OpenGPT_API_PORT" \
       > "$LOG_DIR/backend.log" 2>&1 &
     BACKEND_PID=$!
 
@@ -177,7 +178,7 @@ start_services() {
     echo ""
     echo "✅ 后台启动完成！"
     echo "   前端: http://localhost:5173"
-    echo "   后端: http://localhost:8000"
+    echo "   后端: http://localhost:$OpenGPT_API_PORT"
     echo "   向量网关: http://localhost:$EMBEDDING_GATEWAY_PORT/v1/embeddings"
     echo "   日志: $LOG_DIR/"
     echo ""
@@ -185,7 +186,7 @@ start_services() {
     echo "停止服务: bash start.sh stop"
   else
     cd "$ROOT/backend"
-    .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload &
+    .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port "$OpenGPT_API_PORT" --reload &
     BACKEND_PID=$!
 
     cd "$ROOT/frontend"
@@ -195,7 +196,7 @@ start_services() {
     echo ""
     echo "✅ 启动完成！"
     echo "   前端: http://localhost:5173"
-    echo "   后端: http://localhost:8000"
+    echo "   后端: http://localhost:$OpenGPT_API_PORT"
     echo "   向量网关: http://localhost:$EMBEDDING_GATEWAY_PORT/v1/embeddings"
     echo ""
     echo "按 Ctrl+C 停止所有服务"

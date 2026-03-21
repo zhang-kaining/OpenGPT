@@ -52,3 +52,4 @@ desktop/node_modules/
 Thumbs.db
 .idea/
 .vscode/
+desktop/dist/

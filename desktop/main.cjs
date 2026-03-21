@@ -2,11 +2,14 @@
  * 开发机试用：拉起 embedding 网关 + 主 API（含静态前端），再用 Electron 打开本地页面。
  * 需在仓库根目录：frontend 已 build、backend 已有 .venv 与 .env。
  */
-const { app, BrowserWindow, dialog } = require('electron')
+const { app, BrowserWindow, dialog, nativeImage } = require('electron')
 const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 const net = require('net')
+
+// 与 start.sh、Vite 代理默认一致；可用环境变量 OpenGPT_API_PORT / MYGPT_API_PORT 覆盖
+const DEFAULT_API_PORT = '18789'
 
 // 系统代理若未排除 localhost，fetch(127.0.0.1) 会失败 → 误判超时
 if (!/\b127\.0\.0\.1\b/.test(process.env.NO_PROXY || '')) {
@@ -15,12 +18,139 @@ if (!/\b127\.0\.0\.1\b/.test(process.env.NO_PROXY || '')) {
 
 /** @type {import('child_process').ChildProcess[]} */
 const children = []
+const devRootDir = path.resolve(__dirname, '..')
+
+function runtimeRootDir() {
+  return app.isPackaged ? process.resourcesPath : devRootDir
+}
+
+/** Dock / 窗口图标：开发用 build/app-icon-1024.png，安装包用 Resources/icon.icns */
+function appIconPath() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'icon.icns')
+  }
+  return path.join(__dirname, 'build', 'app-icon-1024.png')
+}
+
+function userDataRootDir() {
+  return app.getPath('userData')
+}
+
+function runtimeDataRoot() {
+  return path.join(userDataRootDir(), 'data')
+}
 
 function venvPython(backendRoot) {
   if (process.platform === 'win32') {
     return path.join(backendRoot, '.venv', 'Scripts', 'python.exe')
   }
   return path.join(backendRoot, '.venv', 'bin', 'python')
+}
+
+function runtimeVenvRoot(dataRoot) {
+  return path.join(dataRoot, 'runtime-venv')
+}
+
+function runtimeVenvPython(dataRoot) {
+  const root = runtimeVenvRoot(dataRoot)
+  if (process.platform === 'win32') {
+    return path.join(root, 'Scripts', 'python.exe')
+  }
+  return path.join(root, 'bin', 'python')
+}
+
+function createLineWriter(filePath) {
+  const stream = fs.createWriteStream(filePath, { flags: 'a' })
+  return (line) => {
+    stream.write(`${line}\n`)
+  }
+}
+
+function runCommand(cmd, args, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(cmd, args, {
+      cwd: opts.cwd,
+      env: { ...process.env, ...(opts.env || {}) },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    const write = opts.writeLine || (() => {})
+    p.stdout.on('data', (buf) => write(String(buf).trimEnd()))
+    p.stderr.on('data', (buf) => write(String(buf).trimEnd()))
+    p.on('error', reject)
+    p.on('close', (code) => {
+      if (code === 0) return resolve()
+      reject(new Error(`${cmd} ${args.join(' ')} exited with code ${code}`))
+    })
+  })
+}
+
+async function findSystemPython() {
+  const candidates =
+    process.platform === 'win32'
+      ? ['python', 'py']
+      : ['/opt/homebrew/bin/python3', '/usr/local/bin/python3', '/usr/bin/python3', 'python3']
+  for (const cmd of candidates) {
+    try {
+      await runCommand(cmd, ['-V'], {})
+      return cmd
+    } catch (_) {
+      /* try next */
+    }
+  }
+  return null
+}
+
+function buildLoadingHtml(opts = {}) {
+  const apiHint = process.env.OpenGPT_API_PORT || process.env.MYGPT_API_PORT || DEFAULT_API_PORT
+  const extra = opts.firstTimeDeps
+    ? '<p style="margin:12px 24px 0;max-width:440px;font-size:13px;line-height:1.45;opacity:0.88;text-align:center">' +
+      '首次启动正在创建 Python 运行环境并安装依赖（pip），可能需要数分钟，请保持网络畅通。</p>'
+    : ''
+  return (
+    '<!DOCTYPE html><html><head><meta charset="utf-8"><title>OpenGPT</title></head>' +
+    '<body style="margin:0;font:15px system-ui,-apple-system,sans-serif;background:#1e1e1e;color:#e0e0e0;' +
+    'display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh">' +
+    '<p style="margin:0">正在检测或启动本机服务，请稍候…</p>' +
+    '<p style="margin:10px 28px 0;max-width:460px;font-size:12px;line-height:1.45;opacity:0.75;text-align:center">' +
+    `若停很久：可能正在确认 ${apiHint} 端口上的服务（最多约 2 分钟），或首次安装 Python 依赖。</p>` +
+    extra +
+    '</body></html>'
+  )
+}
+
+function createShellWindow() {
+  return new BrowserWindow({
+    width: 1280,
+    height: 840,
+    show: true,
+    icon: appIconPath(),
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  })
+}
+
+async function createLoadingWindow(firstTimeDeps) {
+  const win = createShellWindow()
+  await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(buildLoadingHtml({ firstTimeDeps })))
+  return win
+}
+
+async function ensureRuntimeVenv(backendRoot, dataRoot, setupLogPath) {
+  const py = runtimeVenvPython(dataRoot)
+  if (fs.existsSync(py)) return py
+  const write = createLineWriter(setupLogPath)
+  write(`--- ${new Date().toISOString()} setup runtime venv ---`)
+  const sysPy = await findSystemPython()
+  if (!sysPy) {
+    throw new Error('未找到系统 Python3，无法自动创建运行环境')
+  }
+  const req = path.join(backendRoot, 'requirements.txt')
+  const venvRoot = runtimeVenvRoot(dataRoot)
+  await runCommand(sysPy, ['-m', 'venv', venvRoot], { writeLine: write })
+  await runCommand(runtimeVenvPython(dataRoot), ['-m', 'pip', 'install', '-r', req], { writeLine: write })
+  return runtimeVenvPython(dataRoot)
 }
 
 function spawnManaged(cmd, args, opts) {
@@ -105,7 +235,7 @@ async function waitForApiHealth(apiPort, timeoutMs = 120000) {
   return false
 }
 
-/** 8000 上是否为桌面版所需的静态首页（npm run build 产物） */
+/** 指定端口上是否为桌面版所需的静态首页（npm run build 产物） */
 async function isBundledSpaOnPort(apiPort) {
   const res = await fetchWithTimeout(`http://127.0.0.1:${apiPort}/`, 3000)
   if (!res) return false
@@ -119,7 +249,7 @@ async function isBundledSpaOnPort(apiPort) {
   return !!(res.ok && looksLikeHtml && !text.trimStart().startsWith('{'))
 }
 
-/** start.sh：API 在 8000、界面在 Vite 5173 */
+/** start.sh：API 与 OpenGPT_API_PORT 一致、界面在 Vite 5173 */
 async function isViteDevFrontend() {
   const res = await fetchWithTimeout('http://127.0.0.1:5173/', 2500)
   if (!res || !res.ok) return false
@@ -128,7 +258,7 @@ async function isViteDevFrontend() {
 }
 
 /**
- * 若本机已有可用服务则直接复用，避免与 start.sh 抢 8000/8101。
+ * 若本机已有可用服务则直接复用，避免与 start.sh 抢默认 API 口 / 8101。
  * 端口未监听 → 立即自启；已监听但 health 未就绪 → 最长等待（start.sh + MCP 加载较慢）。
  * @returns {'spawn'|'open'|'conflict'|'bad-port'} & { url?: string }
  */
@@ -152,7 +282,7 @@ async function resolveExistingStack(apiPort) {
   return { action: 'conflict' }
 }
 
-/** 避免 8000 已被「无 OpenGPT_STATIC_DIR」的旧后端占用：/api/health 正常但 / 会返回 {"detail":"Not Found"} */
+/** 避免端口已被「无 OpenGPT_STATIC_DIR」的旧后端占用：/api/health 正常但 / 会返回 {"detail":"Not Found"} */
 async function verifySpaRoot(apiPort, timeoutMs = 30000) {
   const url = `http://127.0.0.1:${apiPort}/`
   const start = Date.now()
@@ -180,25 +310,56 @@ async function verifySpaRoot(apiPort, timeoutMs = 30000) {
 }
 
 async function bootstrap() {
-  const root = path.resolve(__dirname, '..')
+  const root = runtimeRootDir()
+  const userDataRoot = userDataRootDir()
+  const dataRoot = runtimeDataRoot()
+  fs.mkdirSync(dataRoot, { recursive: true })
+  const logDir = app.isPackaged ? path.join(userDataRoot, 'logs') : path.join(root, 'logs')
+  fs.mkdirSync(logDir, { recursive: true })
+  const spawnGwLog = path.join(logDir, 'electron-spawn-gateway.log')
+  const spawnApiLog = path.join(logDir, 'electron-spawn-api.log')
+  const setupLog = path.join(logDir, 'electron-setup.log')
   const backendRoot = path.join(root, 'backend')
   const dist = path.join(root, 'frontend', 'dist')
-  const py = venvPython(backendRoot)
+  let py = venvPython(backendRoot)
+  /** @type {import('electron').BrowserWindow | null} */
+  let win = null
 
   if (!fs.existsSync(py)) {
-    await dialog.showErrorBox(
-      'OpenGPT',
-      '未找到 backend/.venv。\n请在 backend 目录执行：python3 -m venv .venv && .venv/bin/pip install -r requirements.txt',
-    )
-    app.quit()
-    return
+    if (app.isPackaged) {
+      const firstTimeRuntime = !fs.existsSync(runtimeVenvPython(dataRoot))
+      if (firstTimeRuntime) {
+        win = await createLoadingWindow(true)
+      }
+      try {
+        py = await ensureRuntimeVenv(backendRoot, dataRoot, setupLog)
+      } catch (e) {
+        if (win && !win.isDestroyed()) win.close()
+        await dialog.showErrorBox(
+          'OpenGPT',
+          `首次启动需初始化 Python 依赖，失败：${String(e && e.message ? e.message : e)}\n` +
+            `请查看日志：${setupLog}`,
+        )
+        app.quit()
+        return
+      }
+    } else {
+      await dialog.showErrorBox(
+        'OpenGPT',
+        '未找到 backend/.venv。\n请在 backend 目录执行：python3 -m venv .venv && .venv/bin/pip install -r requirements.txt',
+      )
+      app.quit()
+      return
+    }
   }
   if (!fs.existsSync(path.join(backendRoot, '.env'))) {
+    if (win && !win.isDestroyed()) win.close()
     await dialog.showErrorBox('OpenGPT', '未找到 backend/.env，请从 .env.example 复制并填写。')
     app.quit()
     return
   }
   if (!fs.existsSync(path.join(dist, 'index.html'))) {
+    if (win && !win.isDestroyed()) win.close()
     await dialog.showErrorBox(
       'OpenGPT',
       '未找到 frontend/dist。\n请在 frontend 目录执行：npm install && npm run build',
@@ -207,28 +368,18 @@ async function bootstrap() {
     return
   }
 
-  const loadingHtml =
-    '<!DOCTYPE html><html><head><meta charset="utf-8"><title>OpenGPT</title></head>' +
-    '<body style="margin:0;font:15px system-ui,-apple-system,sans-serif;background:#1e1e1e;color:#e0e0e0;' +
-    'display:flex;align-items:center;justify-content:center;min-height:100vh">' +
-    '<p>正在检测或启动本机服务，请稍候…</p></body></html>'
-  const win = new BrowserWindow({
-    width: 1280,
-    height: 840,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-    },
-  })
-  await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(loadingHtml))
-
   let gwPort = process.env.EMBEDDING_GATEWAY_PORT || '8101'
-  let apiPort = process.env.OpenGPT_API_PORT || process.env.MYGPT_API_PORT || '8000'
+  let apiPort = process.env.OpenGPT_API_PORT || process.env.MYGPT_API_PORT || DEFAULT_API_PORT
 
-  const logDir = path.join(root, 'logs')
-  fs.mkdirSync(logDir, { recursive: true })
-  const spawnGwLog = path.join(logDir, 'electron-spawn-gateway.log')
-  const spawnApiLog = path.join(logDir, 'electron-spawn-api.log')
+  /**
+   * 必须先有窗口再 resolveExistingStack：若默认 API 端口已被占用，waitForApiHealth 最长等 120s、
+   * 等 Vite 再等 45s，否则 Dock 只有图标、用户以为卡死。
+   */
+  if (!win || win.isDestroyed()) {
+    win = await createLoadingWindow(false)
+  } else {
+    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(buildLoadingHtml({ firstTimeDeps: false })))
+  }
 
   const existing = await resolveExistingStack(apiPort)
   if (existing.action === 'open') {
@@ -236,7 +387,7 @@ async function bootstrap() {
     return
   }
   if (existing.action === 'bad-port') {
-    // 常见于 8000 被其它进程占用（如 IDE 扩展），自动改用备用端口继续启动
+    // 常见于默认端口被其它进程占用，自动改用备用端口继续启动
     apiPort = await pickFreePort([18000, 18001, 18002, 18010, 18080, 19000])
   }
   if (existing.action === 'conflict') {
@@ -250,7 +401,10 @@ async function bootstrap() {
 
   spawnManaged(py, ['-m', 'uvicorn', 'embedding_gateway.main:app', '--host', '127.0.0.1', '--port', gwPort], {
     cwd: backendRoot,
-    env: { EMBEDDING_GATEWAY_PORT: gwPort },
+    env: {
+      EMBEDDING_GATEWAY_PORT: gwPort,
+      PYTHONDONTWRITEBYTECODE: '1',
+    },
     stderrLog: spawnGwLog,
   })
 
@@ -259,8 +413,14 @@ async function bootstrap() {
   spawnManaged(py, ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', apiPort], {
     cwd: backendRoot,
     env: {
+      OpenGPT_API_PORT: apiPort,
       OpenGPT_STATIC_DIR: dist,
       EMBEDDING_GATEWAY_PORT: gwPort,
+      EMBEDDING_BASE_URL: `http://127.0.0.1:${gwPort}/v1`,
+      DB_PATH: path.join(dataRoot, 'chat.db'),
+      MEM0_DIR: path.join(dataRoot, 'mem0'),
+      MEMORY_LEGACY_PATH: path.join(dataRoot, 'qdrant'),
+      PYTHONDONTWRITEBYTECODE: '1',
     },
     stderrLog: spawnApiLog,
   })
@@ -273,7 +433,7 @@ async function bootstrap() {
       e && e.message === 'SPA_ROOT_CHECK_FAILED'
         ? `首页不是前端页面（常见原因：${apiPort} 端口已被占用）。\n` +
           '请先停止其它后端，例如：在项目根目录执行 bash start.sh stop\n' +
-          '或改用其它端口：export OpenGPT_API_PORT=8001 后再 npm start\n' +
+          `或改用其它端口：export OpenGPT_API_PORT=18001 后再 npm start\n` +
           '并确认已执行：cd frontend && npm run build'
         : `主服务启动超时。\n请查看项目下 logs/electron-spawn-api.log 与 logs/electron-spawn-gateway.log；\n` +
           '并检查 backend/.env、依赖是否完整，或在 backend 目录手动运行 uvicorn 查看报错。'
@@ -287,6 +447,17 @@ async function bootstrap() {
 }
 
 app.whenReady().then(() => {
+  try {
+    const iconPath = appIconPath()
+    if (fs.existsSync(iconPath)) {
+      const icon = nativeImage.createFromPath(iconPath)
+      if (!icon.isEmpty() && process.platform === 'darwin' && app.dock) {
+        app.dock.setIcon(icon)
+      }
+    }
+  } catch (_) {
+    /* ignore icon loading errors */
+  }
   bootstrap().catch(async (e) => {
     console.error(e)
     await dialog.showErrorBox('OpenGPT', String(e && e.message ? e.message : e))
@@ -296,8 +467,11 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
-  killAllChildren()
-  app.quit()
+  // macOS：关窗不等于退出，保留本机后端进程，再次点开 Dock 可秒开；真正退出用 Cmd+Q（会走 before-quit）
+  if (process.platform !== 'darwin') {
+    killAllChildren()
+    app.quit()
+  }
 })
 
 app.on('before-quit', () => {

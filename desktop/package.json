@@ -4,9 +4,52 @@
   "private": true,
   "main": "main.cjs",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "pack:dir": "electron-builder --dir",
+    "pack:mac": "electron-builder --mac",
+    "icons:mac": "bash scripts/regenerate-mac-icon.sh"
   },
   "devDependencies": {
-    "electron": "^33.4.1"
+    "electron": "^33.4.1",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "com.opengpt.desktop",
+    "productName": "OpenGPT",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.cjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend",
+        "to": "backend",
+        "filter": [
+          "**/*",
+          "!**/.venv/**",
+          "!**/__pycache__/**",
+          "!**/*.pyc"
+        ]
+      },
+      {
+        "from": "../frontend/dist",
+        "to": "frontend/dist"
+      },
+      {
+        "from": "../frontend/public/hamster.svg",
+        "to": "frontend/public/hamster.svg"
+      }
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.icns"
+    }
   }
 }
