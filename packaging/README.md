@@ -21,7 +21,7 @@ npm start
 Electron 会启动：
 
 1. 向量网关（默认端口与 `.env` 中 `EMBEDDING_GATEWAY_PORT` 一致，缺省 `8101`）
-2. 主 API + 静态页面（`MYGPT_API_PORT` 缺省 `8000`，由程序设置 `MYGPT_STATIC_DIR` 指向 `frontend/dist`）
+2. 主 API + 静态页面（`OpenGPT_API_PORT` 缺省 `8000`，由程序设置 `OpenGPT_STATIC_DIR` 指向 `frontend/dist`）
 
 浏览器里也可直接打开：`http://127.0.0.1:8000/`（需自行先按 `start.sh` 或上述方式启动两个 uvicorn）。
 
@@ -29,12 +29,12 @@ Electron 会启动：
 
 | 变量 | 说明 |
 |------|------|
-| `MYGPT_API_PORT` | 主服务端口，默认 `8000` |
+| `OpenGPT_API_PORT` | 主服务端口，默认 `8000` |
 | `EMBEDDING_GATEWAY_PORT` | 向量网关端口，需与 `backend/.env` 里 `EMBEDDING_BASE_URL` 一致 |
 
 ## 后端说明
 
-设置环境变量 **`MYGPT_STATIC_DIR`** 为 `frontend/dist` 的绝对路径时，FastAPI 会在同一端口托管前端静态资源（`html=True` 支持 Vue 路由刷新）。
+设置环境变量 **`OpenGPT_STATIC_DIR`** 为 `frontend/dist` 的绝对路径时，FastAPI 会在同一端口托管前端静态资源（`html=True` 支持 Vue 路由刷新）。
 
 ## 进一步打成 .app（可选）
 

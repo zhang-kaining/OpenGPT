@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="MyGPT API", lifespan=lifespan)
+app = FastAPI(title="OpenGPT API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -65,7 +65,7 @@ async def feishu_permissions():
         return {"error": str(e)}
 
 
-# 桌面 / 单端口部署：设置 MYGPT_STATIC_DIR 为 frontend 构建目录（含 index.html）
-_static = os.environ.get("MYGPT_STATIC_DIR", "").strip()
+# 桌面 / 单端口部署：设置 OpenGPT_STATIC_DIR 为 frontend 构建目录（含 index.html）
+_static = os.environ.get("OpenGPT_STATIC_DIR", "").strip()
 if _static and os.path.isdir(_static):
     app.mount("/", StaticFiles(directory=_static, html=True), name="spa")

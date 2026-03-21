@@ -114,7 +114,7 @@ status_services() {
 start_services() {
   local daemon=$1
 
-  echo "=== 启动 MyGPT ==="
+  echo "=== 启动 OpenGPT ==="
   backup_qdrant
 
   # 后端

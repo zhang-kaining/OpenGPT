@@ -1,12 +1,38 @@
+import errno
 import os
 from dotenv import load_dotenv
 
 # 提前加载 .env，确保 MEM0_DIR 在 mem0 模块导入前生效
 load_dotenv()
 
-# 确保 mem0 数据目录存在
-_mem0_dir = os.environ.get("MEM0_DIR", os.path.join(os.path.expanduser("~"), ".mem0"))
-os.makedirs(_mem0_dir, exist_ok=True)
+
+def _default_mem0_dir() -> str:
+    return os.path.join(os.path.expanduser("~"), ".mem0")
+
+
+def _resolve_mem0_dir() -> str:
+    raw = (os.environ.get("MEM0_DIR") or "").strip()
+    if not raw:
+        return _default_mem0_dir()
+    return os.path.expanduser(raw)
+
+
+# 确保 mem0 数据目录存在（本地勿用 Docker 的 /root/...，否则会 Read-only file system）
+_mem0_dir = _resolve_mem0_dir()
+try:
+    os.makedirs(_mem0_dir, exist_ok=True)
+except OSError as e:
+    # macOS 上 /root 常见 EPERM(1) 或 EROFS(30)；容器内用 /root/.mem0 正常
+    if e.errno in (errno.EACCES, errno.EPERM, errno.EROFS, 30):
+        _fb = _default_mem0_dir()
+        if os.path.abspath(_mem0_dir) != os.path.abspath(_fb):
+            _mem0_dir = _fb
+            os.makedirs(_mem0_dir, exist_ok=True)
+        else:
+            raise
+    else:
+        raise
+os.environ["MEM0_DIR"] = _mem0_dir
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache

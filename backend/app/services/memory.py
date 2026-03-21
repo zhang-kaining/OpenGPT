@@ -6,16 +6,16 @@ import sqlite3
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 
-# mem0 在模块级别读取 MEM0_DIR，必须在导入前设置
+# mem0 读 MEM0_DIR；由 app.config 在 import 时解析（含不可写路径回退到 ~/.mem0）
 load_dotenv()
-_mem0_dir = os.environ.get("MEM0_DIR", os.path.join(os.path.expanduser("~"), ".mem0"))
-os.makedirs(_mem0_dir, exist_ok=True)
+import app.config as _app_config  # noqa: F401
 
 from mem0 import Memory
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+_mem0_dir = os.environ.get("MEM0_DIR", os.path.join(os.path.expanduser("~"), ".mem0"))
 
 _memory: Memory | None = None
 _legacy_memory: Memory | None = None

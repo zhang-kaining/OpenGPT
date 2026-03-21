@@ -68,7 +68,7 @@ def _clean_html(html: str, max_len: int = 100) -> str:
 
 def _fetch_feed(source_name: str, url: str) -> list[NewsItem]:
     try:
-        req = Request(url, headers={"User-Agent": "Mozilla/5.0 MyGPT-RSS/1.0"})
+        req = Request(url, headers={"User-Agent": "Mozilla/5.0 OpenGPT-RSS/1.0"})
         resp = urlopen(req, timeout=10)
         data = resp.read().decode("utf-8", errors="replace")
         root = ET.fromstring(data)
