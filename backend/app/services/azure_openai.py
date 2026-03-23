@@ -15,7 +15,11 @@ import json
 import logging
 from typing import AsyncGenerator
 
-from openai import AsyncAzureOpenAI
+import httpx
+from openai import AsyncAzureOpenAI, AsyncOpenAI
+
+# 模型对话（含流式）：单次请求读超时最长 5 分钟；连接仍保持较短以免挂死
+LLM_HTTP_TIMEOUT = httpx.Timeout(300.0, connect=30.0)
 
 from app.config import get_settings
 from app.services import feishu as feishu_service
@@ -24,20 +28,109 @@ from app.services.mcp_manager import get_mcp_manager
 from app.services.skill_manager import get_skill_manager
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
-_client: AsyncAzureOpenAI | None = None
+_azure_clients: dict[str, AsyncAzureOpenAI] = {}
+_openai_clients: dict[str, AsyncOpenAI] = {}
 
 
-def get_client() -> AsyncAzureOpenAI:
-    global _client
-    if _client is None:
-        _client = AsyncAzureOpenAI(
-            api_key=settings.azure_openai_api_key,
-            azure_endpoint=settings.azure_openai_endpoint,
-            api_version=settings.azure_openai_api_version,
+def reset_chat_clients() -> None:
+    _azure_clients.clear()
+    _openai_clients.clear()
+
+
+def _parse_providers(s) -> list[dict]:
+    try:
+        v = json.loads(s.llm_providers_json or "[]")
+        return v if isinstance(v, list) else []
+    except json.JSONDecodeError:
+        return []
+
+
+def _pick_provider(s, override_id: str | None) -> dict | None:
+    provs = _parse_providers(s)
+    pid = (override_id or s.active_llm_provider_id or "").strip()
+    if pid:
+        for p in provs:
+            if isinstance(p, dict) and p.get("id") == pid:
+                return p
+    return provs[0] if provs else None
+
+
+def resolve_llm(s, override_id: str | None = None) -> tuple[str, str, dict]:
+    """
+    返回 (kind, model, openai_extra)。
+    kind 为 azure 时 model 为 deployment；openai 时 model 为兼容 API 的 model 名。
+    openai_extra 仅 kind==openai 时有 base_url、api_key。
+
+    须在设置中配置至少一条 llm_providers_json；不再在未配置时静默回退到全局 Azure。
+    """
+    if not _parse_providers(s):
+        raise ValueError(
+            "尚未配置任何模型提供方。请打开「设置 → 环境与模型」，至少添加一条提供方（OpenAI 兼容或 Azure）。"
         )
-    return _client
+    p = _pick_provider(s, override_id)
+    if not p:
+        raise ValueError("无法解析当前选中的模型提供方，请检查 active_llm_provider_id 与列表中的 id 是否一致。")
+    kind = str(p.get("kind") or "").strip().lower()
+    if kind == "openai":
+        base = (p.get("base_url") or "").strip().rstrip("/")
+        key = (p.get("api_key") or "").strip()
+        model = (p.get("model") or "gpt-4o-mini").strip()
+        if not base:
+            raise ValueError("当前 OpenAI 兼容提供方缺少 base_url，请在设置中补全后再试。")
+        if not base.endswith("/v1"):
+            base = f"{base}/v1"
+        return "openai", model, {"base_url": base, "api_key": key}
+    if kind == "azure":
+        dep = (p.get("deployment") or "").strip() or s.azure_openai_deployment
+        if not dep:
+            raise ValueError("当前 Azure 提供方缺少 deployment，请在设置中补全后再试。")
+        endpoint = (p.get("endpoint") or "").strip() or s.azure_openai_endpoint
+        api_version = (p.get("api_version") or "").strip() or s.azure_openai_api_version
+        api_key = (p.get("api_key") or "").strip() or s.azure_openai_api_key
+        if not endpoint:
+            raise ValueError("当前 Azure 提供方缺少 endpoint，请在设置中补全后再试。")
+        if not api_version:
+            raise ValueError("当前 Azure 提供方缺少 api_version，请在设置中补全后再试。")
+        if not api_key:
+            raise ValueError("当前 Azure 提供方缺少 api_key，请在设置中补全后再试。")
+        return "azure", dep, {
+            "endpoint": endpoint,
+            "api_version": api_version,
+            "api_key": api_key,
+        }
+    raise ValueError("模型提供方 kind 无效，仅支持 openai 或 azure。")
+
+
+def get_llm_client(s, kind: str, openai_extra: dict):
+    if kind == "azure":
+        endpoint = str(openai_extra.get("endpoint") or "").strip()
+        api_version = str(openai_extra.get("api_version") or "").strip()
+        api_key = str(openai_extra.get("api_key") or "").strip()
+        cache_key = f"{endpoint}|{api_version}|{api_key[:12]}"
+        if cache_key not in _azure_clients:
+            _azure_clients[cache_key] = AsyncAzureOpenAI(
+                api_key=api_key,
+                azure_endpoint=endpoint,
+                api_version=api_version,
+                timeout=LLM_HTTP_TIMEOUT,
+            )
+        return _azure_clients[cache_key]
+    cache_key = f"{openai_extra.get('base_url','')}|{openai_extra.get('api_key','')[:12]}"
+    if cache_key not in _openai_clients:
+        _openai_clients[cache_key] = AsyncOpenAI(
+            base_url=openai_extra["base_url"],
+            api_key=openai_extra.get("api_key") or "EMPTY",
+            timeout=LLM_HTTP_TIMEOUT,
+        )
+    return _openai_clients[cache_key]
+
+
+def get_chat_client(llm_provider_id: str | None = None):
+    """供笔记整理等单次调用：返回 (client, kind, model)。"""
+    s = get_settings()
+    kind, model, extra = resolve_llm(s, llm_provider_id)
+    return get_llm_client(s, kind, extra), kind, model
 
 
 def build_system_prompt(memories: list[dict]) -> str:
@@ -59,18 +152,18 @@ def build_system_prompt(memories: list[dict]) -> str:
     return base
 
 
-def _build_initial_tools(enable_search: bool) -> list[dict]:
+def _build_initial_tools(enable_search: bool, s) -> list[dict]:
     """构建初始工具列表（每次对话开始时）"""
     skill_mgr = get_skill_manager()
     mcp_mgr = get_mcp_manager()
     tools: list[dict] = []
 
     # 内置工具：网络搜索
-    if enable_search and settings.tavily_api_key:
+    if enable_search and s.tavily_api_key:
         tools.append(search_service.TOOL_DEFINITION)
 
     # 内置工具：飞书发消息（写文档为独立 Skill feishu-write-doc）
-    if settings.feishu_app_id and settings.feishu_app_secret:
+    if s.feishu_app_id and s.feishu_app_secret:
         tools.append(feishu_service.TOOL_DEFINITION)
 
     # Skill tool.py 工具（直接注册，无需 get_skill_detail）
@@ -92,6 +185,7 @@ async def stream_chat(
     messages: list[dict],
     memories: list[dict],
     enable_search: bool = True,
+    llm_provider_id: str | None = None,
 ) -> AsyncGenerator[dict, None]:
     """
     异步生成器，yield SSE 事件字典：
@@ -102,12 +196,14 @@ async def stream_chat(
     - {"type": "done",           "citations": [...]}
     - {"type": "error",          "message": "..."}
     """
-    client = get_client()
+    s = get_settings()
+    kind, model_name, openai_extra = resolve_llm(s, llm_provider_id)
+    client = get_llm_client(s, kind, openai_extra)
     system_prompt = build_system_prompt(memories)
     full_messages = [{"role": "system", "content": system_prompt}] + messages
 
     # tools 在循环内可动态追加（get_skill_detail 触发后追加该 Skill 的工具）
-    tools = _build_initial_tools(enable_search)
+    tools = _build_initial_tools(enable_search, s)
     all_citations: list[dict] = []
     total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
@@ -115,7 +211,7 @@ async def stream_chat(
         # 最多 6 轮工具调用（防止死循环）
         for _round in range(6):
             kwargs: dict = dict(
-                model=settings.azure_openai_deployment,
+                model=model_name,
                 messages=full_messages,
                 stream=True,
                 stream_options={"include_usage": True},

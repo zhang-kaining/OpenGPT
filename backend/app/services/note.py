@@ -6,11 +6,9 @@ import aiosqlite
 
 from app.config import get_settings
 
-settings = get_settings()
-
 
 async def init_note_tables() -> None:
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS note_folders (
@@ -52,7 +50,7 @@ def _now() -> str:
 # ── Folders ──────────────────────────────────────────────────────────────────
 
 async def list_note_folders(user_id: str) -> list[dict]:
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT id, parent_id, name, created_at, updated_at "
@@ -66,7 +64,7 @@ async def list_note_folders(user_id: str) -> list[dict]:
 async def create_note_folder(user_id: str, name: str, parent_id: Optional[str] = None) -> dict:
     fid = str(uuid.uuid4())
     now = _now()
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         await db.execute(
             "INSERT INTO note_folders (id, user_id, parent_id, name, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
@@ -96,7 +94,7 @@ async def _note_folder_subtree_ids(db: aiosqlite.Connection, user_id: str, folde
 
 
 async def delete_note_folder(user_id: str, folder_id: str) -> bool:
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         ids = await _note_folder_subtree_ids(db, user_id, folder_id)
         if not ids:
             return False
@@ -117,7 +115,7 @@ async def delete_note_folder(user_id: str, folder_id: str) -> bool:
 
 async def list_notes(user_id: str) -> list[dict]:
     """Return all notes (without content) for the sidebar list."""
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT id, folder_id, title, created_at, updated_at "
@@ -132,7 +130,7 @@ async def create_note(user_id: str, title: str, folder_id: Optional[str] = None,
     nid = str(uuid.uuid4())
     now = _now()
     title = (title or "未命名").strip()
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         await db.execute(
             "INSERT INTO notes (id, user_id, folder_id, title, content, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -144,7 +142,7 @@ async def create_note(user_id: str, title: str, folder_id: Optional[str] = None,
 
 
 async def get_note(user_id: str, note_id: str) -> Optional[dict]:
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT * FROM notes WHERE id = ? AND user_id = ?",
@@ -161,7 +159,7 @@ async def save_note(user_id: str, note_id: str, title: Optional[str], content: O
     now = _now()
     new_title = (title or note["title"]).strip() or "未命名"
     new_content = content if content is not None else note["content"]
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         await db.execute(
             "UPDATE notes SET title = ?, content = ?, updated_at = ? WHERE id = ? AND user_id = ?",
             (new_title, new_content, now, note_id, user_id),
@@ -171,7 +169,7 @@ async def save_note(user_id: str, note_id: str, title: Optional[str], content: O
 
 
 async def delete_note(user_id: str, note_id: str) -> bool:
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         await db.execute("DELETE FROM notes WHERE id = ? AND user_id = ?", (note_id, user_id))
         await db.commit()
     return True

@@ -8,11 +8,20 @@
           <path d="M9 3v18"/>
         </svg>
       </button>
-      <div v-if="store.messages.length > 0" class="model-selector">
-        <span>OpenGPT</span>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <path d="m6 9 6 6 6-6"/>
-        </svg>
+      <div v-if="store.llmProviders.length" class="model-selector-wrap">
+        <select
+          v-model="store.selectedLlmProviderId"
+          class="model-select"
+          title="本条对话使用的模型提供方"
+          @change="store.persistLlmProviderSelection()"
+        >
+          <option v-for="p in store.llmProviders" :key="p.id" :value="p.id">
+            {{ providerLabel(p) }}
+          </option>
+        </select>
+      </div>
+      <div v-else class="model-selector-hint" title="未配置多模型">
+        未配置模型提供方 · 请打开「设置 → 环境与模型」添加
       </div>
     </div>
 
@@ -73,7 +82,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, inject, onMounted } from 'vue'
+import { ref, watch, nextTick, inject, onMounted, onUnmounted } from 'vue'
+import type { LlmProviderOption } from '@/services/api'
 import type { Ref } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import MessageBubble from './MessageBubble.vue'
@@ -82,6 +92,12 @@ import InputBar from './InputBar.vue'
 const store = useChatStore()
 const sidebarCollapsed = inject<Ref<boolean>>('sidebarCollapsed', ref(false))
 const scrollEl = ref<HTMLElement | null>(null)
+
+function providerLabel(p: LlmProviderOption) {
+  const tail = p.kind === 'openai' ? (p.model || 'OpenAI 兼容') : (p.deployment || 'Azure')
+  return `${p.name || p.id} · ${tail}`
+}
+
 
 interface NewsEntry {
   title: string
@@ -123,7 +139,15 @@ async function loadNews() {
   }
 }
 
-onMounted(loadNews)
+onMounted(() => {
+  store.loadLlmCatalog()
+  loadNews()
+  window.addEventListener('mygpt-llm-providers-updated', store.loadLlmCatalog)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('mygpt-llm-providers-updated', store.loadLlmCatalog)
+})
 
 function useSuggestion(text: string) {
   store.sendMessage(text)
@@ -181,19 +205,28 @@ watch(
   color: var(--text-primary);
 }
 
-.model-selector {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-  padding: 6px 8px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.15s;
+.model-selector-wrap {
+  margin-left: auto;
 }
-.model-selector:hover { background: var(--bg-hover); }
+.model-select {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-sidebar);
+  max-width: min(280px, 42vw);
+  cursor: pointer;
+}
+.model-selector-hint {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+  max-width: min(320px, 50vw);
+  text-align: right;
+  line-height: 1.35;
+}
 
 .messages-container {
   flex: 1;

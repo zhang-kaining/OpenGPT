@@ -82,15 +82,282 @@
           </div>
         </div>
 
+        <!-- 对话模型 -->
+        <div v-if="activeTab === 'llm'" class="tab-content env-tab">
+          <p class="tab-desc">
+            对话模型配置保存在后端 SQLite <code>data/settings.db</code>（表 <code>app_settings</code>）。
+            仅支持 OpenAI 兼容与 Azure，至少保存一条后问答才可用。
+          </p>
+
+          <div class="llm-section">
+            <div class="llm-section-title">对话模型（OpenAI 兼容 / Azure）</div>
+            <p class="llm-section-hint"><strong>至少保存一条提供方</strong>后，问答与备忘录 AI 才会调用模型；此前仅填全局 Azure 字段也不会自动生效。可添加多个；问答页下拉切换。OpenAI 兼容填 base_url + api_key + model；Azure 填 endpoint + deployment（api_version / api_key 可选）。</p>
+            <div v-for="(row, idx) in llmRows" :key="idx" class="llm-card">
+              <div class="llm-card-head">
+                <span class="llm-card-label">提供方 {{ idx + 1 }}</span>
+                <div class="llm-card-actions">
+                  <button type="button" class="btn-secondary mini" :disabled="!!llmSavingByIndex[idx]" @click="saveOneLlmProvider(idx)">
+                    {{ llmSavingByIndex[idx] ? '校验中...' : '校验并保存' }}
+                  </button>
+                  <button type="button" class="btn-text danger" :disabled="llmRows.length <= 1 || !!llmSavingByIndex[idx]" @click="removeLlmRow(idx)">删除</button>
+                </div>
+              </div>
+              <div class="llm-fields">
+                <label class="llm-field"><span>类型</span>
+                  <select v-model="row.kind" class="pw-input">
+                    <option value="openai">OpenAI 兼容</option>
+                    <option value="azure">Azure OpenAI</option>
+                  </select>
+                </label>
+                <label class="llm-field"><span>名称（唯一）</span><input v-model="row.name" class="pw-input" placeholder="例如 deepseek-chat" autocomplete="off" /></label>
+                <template v-if="row.kind === 'openai'">
+                  <label class="llm-field span-2"><span>Base URL</span><input v-model="row.base_url" class="pw-input" placeholder="https://api.example.com/v1" autocomplete="off" /></label>
+                  <label class="llm-field"><span>API Key</span><input v-model="row.api_key" class="pw-input" type="password" autocomplete="off" /></label>
+                  <label class="llm-field"><span>Model</span><input v-model="row.model" class="pw-input" placeholder="模型名" autocomplete="off" /></label>
+                </template>
+                <template v-else>
+                  <p class="llm-kind-hint">
+                    Azure 模式不使用 base_url；使用 endpoint + deployment。此处可填单提供方覆盖值，不填则沿用「环境变量」里的全局 Azure 配置。
+                  </p>
+                  <label class="llm-field span-2"><span>Endpoint</span><input v-model="row.endpoint" class="pw-input" placeholder="https://xxx.openai.azure.com" autocomplete="off" /></label>
+                  <label class="llm-field"><span>API Version</span><input v-model="row.api_version" class="pw-input" placeholder="2024-06-01" autocomplete="off" /></label>
+                  <label class="llm-field"><span>API Key</span><input v-model="row.api_key" class="pw-input" type="password" placeholder="可选，可沿用下方全局 Azure 配置" autocomplete="off" /></label>
+                  <label class="llm-field span-2"><span>部署名称（Deployment）</span><input v-model="row.deployment" class="pw-input" placeholder="例如 gpt-4o（可覆盖默认）" autocomplete="off" /></label>
+                </template>
+              </div>
+              <div v-if="llmRowMsgByIndex[idx]" class="save-result" :class="llmRowOkByIndex[idx] ? 'ok' : 'err'">
+                {{ llmRowMsgByIndex[idx] }}
+              </div>
+            </div>
+            <button type="button" class="btn-secondary llm-add-btn" @click="addLlmRow">添加提供方</button>
+            <label class="llm-active-row">
+              <span class="env-label">默认提供方（对话页初始选中）</span>
+              <select
+                v-model="runtimeForm.active_llm_provider_id"
+                class="pw-input env-input"
+                :disabled="savingActiveLlmId"
+                @change="saveActiveLlmProviderId"
+              >
+                <option value="">自动（列表第一项）</option>
+                <option v-for="id in activeLlmIdOptions" :key="id" :value="id">{{ id }}</option>
+              </select>
+              <span v-if="savingActiveLlmId" class="mini-hint">默认提供方保存中...</span>
+            </label>
+          </div>
+          <div class="llm-section">
+            <div class="llm-section-title">Azure 全局默认（可选）</div>
+            <p class="llm-section-hint">当 Azure 提供方未填写 endpoint / api_version / api_key / deployment 时，才回退到这里。</p>
+            <div class="llm-fields">
+              <label class="llm-field span-2"><span>Endpoint</span><input v-model="runtimeForm.azure_openai_endpoint" class="pw-input" placeholder="https://xxx.openai.azure.com" autocomplete="off" /></label>
+              <label class="llm-field"><span>API Version</span><input v-model="runtimeForm.azure_openai_api_version" class="pw-input" placeholder="2024-06-01" autocomplete="off" /></label>
+              <label class="llm-field"><span>默认部署名称（对话）</span><input v-model="runtimeForm.azure_openai_deployment" class="pw-input" placeholder="例如 gpt-4o" autocomplete="off" /></label>
+              <label class="llm-field span-2"><span>API Key</span><input v-model="runtimeForm.azure_openai_api_key" class="pw-input" type="password" autocomplete="off" /></label>
+            </div>
+          </div>
+
+          <details class="llm-json-advanced">
+            <summary>高级：直接编辑 llm_providers_json</summary>
+            <textarea
+              v-model="runtimeForm.llm_providers_json"
+              class="json-editor env-input"
+              rows="6"
+              spellcheck="false"
+              @change="parseProvidersFromForm"
+            />
+          </details>
+
+          <div class="action-row">
+            <button class="btn-secondary" type="button" @click="loadRuntimeSettings">重新加载</button>
+          </div>
+          <div
+            v-if="runtimeSaveMsg"
+            class="save-result"
+            :class="runtimeSaveMsg.includes('失败') ? 'err' : 'ok'"
+          >
+            {{ runtimeSaveMsg }}
+          </div>
+        </div>
+
+        <!-- 向量模型 -->
+        <div v-if="activeTab === 'embedding'" class="tab-content env-tab">
+          <p class="tab-desc">
+            mem0 向量配置与对话模型分开维护；仅支持 OpenAI 兼容与 Azure。
+            向量模型/维度修改后建议重启后端。
+          </p>
+          <div class="llm-section">
+            <div class="llm-section-title">向量模型（OpenAI 兼容 / Azure）</div>
+            <div v-for="(row, idx) in embeddingRows" :key="idx" class="llm-card">
+              <div class="llm-card-head">
+                <span class="llm-card-label">提供方 {{ idx + 1 }}</span>
+                <div class="llm-card-actions">
+                  <button type="button" class="btn-secondary mini" :disabled="!!embeddingSavingByIndex[idx]" @click="saveOneEmbeddingProvider(idx)">
+                    {{ embeddingSavingByIndex[idx] ? '校验中...' : '校验并保存' }}
+                  </button>
+                  <button type="button" class="btn-text danger" :disabled="embeddingRows.length <= 1 || !!embeddingSavingByIndex[idx]" @click="removeEmbeddingRow(idx)">删除</button>
+                </div>
+              </div>
+              <div class="llm-fields">
+                <label class="llm-field"><span>类型</span>
+                  <select v-model="row.kind" class="pw-input">
+                    <option value="openai">OpenAI 兼容</option>
+                    <option value="azure">Azure OpenAI</option>
+                  </select>
+                </label>
+                <label class="llm-field"><span>名称（唯一）</span><input v-model="row.name" class="pw-input" placeholder="例如 emb-openai" autocomplete="off" /></label>
+                <label class="llm-field"><span>Dimensions</span><input v-model="row.dimensions" class="pw-input" placeholder="可选，如 1024" autocomplete="off" /></label>
+                <template v-if="row.kind === 'openai'">
+                  <label class="llm-field span-2"><span>Base URL</span><input v-model="row.base_url" class="pw-input" placeholder="https://api.example.com/v1" autocomplete="off" /></label>
+                  <label class="llm-field"><span>API Key</span><input v-model="row.api_key" class="pw-input" type="password" autocomplete="off" /></label>
+                  <label class="llm-field"><span>Model</span><input v-model="row.model" class="pw-input" placeholder="text-embedding-3-small" autocomplete="off" /></label>
+                </template>
+                <template v-else>
+                  <p class="llm-kind-hint">
+                    Azure 向量模型也不使用 base_url；使用 endpoint + deployment。
+                  </p>
+                  <label class="llm-field span-2"><span>Endpoint</span><input v-model="row.endpoint" class="pw-input" placeholder="https://xxx.openai.azure.com" autocomplete="off" /></label>
+                  <label class="llm-field"><span>API Version</span><input v-model="row.api_version" class="pw-input" placeholder="2024-06-01" autocomplete="off" /></label>
+                  <label class="llm-field"><span>API Key</span><input v-model="row.api_key" class="pw-input" type="password" autocomplete="off" /></label>
+                  <label class="llm-field span-2"><span>部署名称（Deployment）</span><input v-model="row.deployment" class="pw-input" placeholder="例如 text-embedding-3-small" autocomplete="off" /></label>
+                </template>
+              </div>
+              <div v-if="embeddingRowMsgByIndex[idx]" class="save-result" :class="embeddingRowOkByIndex[idx] ? 'ok' : 'err'">
+                {{ embeddingRowMsgByIndex[idx] }}
+              </div>
+            </div>
+            <button type="button" class="btn-secondary llm-add-btn" @click="addEmbeddingRow">添加向量提供方</button>
+            <label class="llm-active-row">
+              <span class="env-label">默认向量提供方（mem0 使用）</span>
+              <select v-model="runtimeForm.active_embedding_provider_id" class="pw-input env-input">
+                <option value="">自动（列表第一项）</option>
+                <option v-for="id in activeEmbeddingIdOptions" :key="id" :value="id">{{ id }}</option>
+              </select>
+            </label>
+          </div>
+
+          <details class="llm-json-advanced">
+            <summary>高级：直接编辑 embedding_providers_json</summary>
+            <textarea
+              v-model="runtimeForm.embedding_providers_json"
+              class="json-editor env-input"
+              rows="6"
+              spellcheck="false"
+              @change="parseEmbeddingsFromForm"
+            />
+          </details>
+          <div class="action-row">
+            <button class="btn-secondary" type="button" @click="loadRuntimeSettings">重新加载</button>
+          </div>
+        </div>
+
+        <!-- 系统配置 -->
+        <div v-if="activeTab === 'env'" class="tab-content env-tab">
+          <p class="tab-desc">
+            所有配置都保存在服务端数据库；这里按功能拆分展示，不再使用“环境变量”概念。
+          </p>
+          <div class="llm-section">
+            <div class="llm-section-title">基础配置</div>
+            <div class="env-grid">
+              <div v-for="key in basicConfigKeys" :key="key" class="env-grid-row">
+                <label class="env-label">
+                  <span class="env-label-main">{{ getConfigLabel(key) }}</span>
+                  <span class="env-hint-dot" :title="getConfigTooltip(key)">?</span>
+                </label>
+                <div class="env-input-wrap">
+                  <input
+                    v-model="runtimeForm[key]"
+                    class="pw-input env-input"
+                    :type="isRuntimeSecretKey(key) ? 'password' : 'text'"
+                    :list="key === 'feishu_default_open_id' && feishuRecipients.length ? 'feishu-openid-list' : undefined"
+                    autocomplete="off"
+                  />
+                  <template v-if="key === 'feishu_default_open_id'">
+                    <div class="env-inline-actions">
+                      <button class="btn-secondary mini" type="button" :disabled="loadingFeishuRecipients" @click="loadFeishuRecipients">
+                        {{ loadingFeishuRecipients ? '拉取中...' : '拉取可见成员' }}
+                      </button>
+                    </div>
+                    <datalist v-if="feishuRecipients.length" id="feishu-openid-list">
+                      <option v-for="u in feishuRecipients" :key="u.open_id" :value="u.open_id">
+                        {{ u.name }}
+                      </option>
+                    </datalist>
+                    <div v-if="feishuRecipientsMsg" class="env-inline-msg" :class="feishuRecipientsOk ? 'ok' : 'err'">
+                      {{ feishuRecipientsMsg }}
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+            <div v-if="!basicConfigKeys.length" class="empty-hint">暂无基础配置项</div>
+          </div>
+          <details class="llm-section">
+            <summary class="llm-section-title">高级运维（谨慎修改）</summary>
+            <div class="env-grid">
+              <div v-for="key in advancedOpsConfigKeys" :key="key" class="env-grid-row">
+                <label class="env-label" :class="{ 'env-label-warn': key === 'db_path' }">
+                  <span class="env-label-main">{{ getConfigLabel(key) }}</span>
+                  <span class="env-hint-dot" :title="getConfigTooltip(key)">?</span>
+                </label>
+                <input
+                  v-model="runtimeForm[key]"
+                  class="pw-input env-input"
+                  :type="isRuntimeSecretKey(key) ? 'password' : 'text'"
+                  autocomplete="off"
+                />
+              </div>
+            </div>
+            <div v-if="!advancedOpsConfigKeys.length" class="empty-hint">暂无高级运维项</div>
+            <p v-if="advancedOpsConfigKeys.includes('db_path')" class="db-path-warn">修改 <code>db_path</code> 会更换 SQLite 文件位置，需自行迁移数据；保存时会二次确认。</p>
+          </details>
+          <details class="llm-section migration-section">
+            <summary class="llm-section-title">迁移兼容（非迁移勿改）</summary>
+            <p class="migration-warn">仅在旧记忆数据迁移期间使用，日常运行请保持默认值。</p>
+            <div class="env-grid">
+              <div v-for="key in migrationCompatConfigKeys" :key="key" class="env-grid-row">
+                <label class="env-label env-label-warn">
+                  <span class="env-label-main">{{ getConfigLabel(key) }}</span>
+                  <span class="env-hint-dot" :title="getConfigTooltip(key)">?</span>
+                </label>
+                <input
+                  v-model="runtimeForm[key]"
+                  class="pw-input env-input"
+                  :type="isRuntimeSecretKey(key) ? 'password' : 'text'"
+                  autocomplete="off"
+                />
+              </div>
+            </div>
+            <div v-if="!migrationCompatConfigKeys.length" class="empty-hint">暂无迁移兼容项</div>
+          </details>
+          <div class="action-row">
+            <button class="btn-secondary" type="button" @click="loadRuntimeSettings">重新加载</button>
+            <button class="btn-primary" type="button" :disabled="savingRuntime" @click="saveRuntimeSettings">
+              {{ savingRuntime ? '保存中...' : '保存' }}
+            </button>
+          </div>
+          <div
+            v-if="runtimeSaveMsg"
+            class="save-result"
+            :class="runtimeSaveMsg.includes('失败') ? 'err' : 'ok'"
+          >
+            {{ runtimeSaveMsg }}
+          </div>
+        </div>
+
         <!-- Skills Tab -->
         <div v-if="activeTab === 'skills'" class="tab-content">
           <p class="tab-desc">技能是预置的工具和行为指令，按需启用。</p>
+          <div v-if="skillsMsg" class="save-result" :class="skillsMsgOk ? 'ok' : 'err'">
+            {{ skillsMsg }}
+          </div>
           <div v-if="loadingSkills" class="loading-hint">加载中...</div>
           <div v-else class="skill-list">
             <div v-for="skill in skills" :key="skill.name" class="skill-item">
               <div class="skill-info">
                 <div class="skill-name">{{ skill.name }}</div>
                 <div class="skill-desc">{{ skill.description }}</div>
+                <div v-if="skill.available === false" class="skill-unavailable">
+                  {{ skill.unavailable_reason || '当前配置不可用' }}
+                </div>
                 <div v-if="skill.tools.length" class="skill-tools">
                   <span v-for="t in skill.tools" :key="t" class="tool-tag">{{ t }}</span>
                 </div>
@@ -99,8 +366,8 @@
                 <input
                   type="checkbox"
                   :checked="skill.enabled"
-                  :disabled="togglingSkill === skill.name"
-                  @change="toggleSkill(skill.name, ($event.target as HTMLInputElement).checked)"
+                  :disabled="togglingSkill === skill.name || (skill.available === false && !skill.enabled)"
+                  @change="onSkillCheckboxChange(skill.name, $event)"
                 />
                 <span class="toggle-slider"></span>
               </label>
@@ -154,6 +421,7 @@
 import { ref, watch, computed } from 'vue'
 import { themeMode } from '@/composables/useTheme'
 import type { ThemeMode } from '@/composables/useTheme'
+import { openConfirm } from '@/composables/useConfirmDialog'
 import * as api from '@/services/api'
 
 const props = defineProps<{ visible: boolean }>()
@@ -161,8 +429,11 @@ defineEmits(['close'])
 
 const tabs = [
   { id: 'general', label: '通用' },
-  { id: 'skills',  label: '技能 Skills' },
-  { id: 'mcp',     label: 'MCP 工具' },
+  { id: 'llm', label: '对话模型' },
+  { id: 'embedding', label: '向量模型' },
+  { id: 'env', label: '系统配置' },
+  { id: 'skills', label: '技能 Skills' },
+  { id: 'mcp', label: 'MCP 工具' },
 ]
 const activeTab = ref('general')
 
@@ -179,11 +450,24 @@ interface SkillInfo {
   description: string
   enabled: boolean
   tools: string[]
+  available?: boolean
+  unavailable_reason?: string
+}
+
+interface FeishuRecipient {
+  open_id: string
+  name: string
 }
 
 const skills = ref<SkillInfo[]>([])
 const loadingSkills = ref(false)
 const togglingSkill = ref<string | null>(null)
+const skillsMsg = ref('')
+const skillsMsgOk = ref(false)
+const feishuRecipients = ref<FeishuRecipient[]>([])
+const loadingFeishuRecipients = ref(false)
+const feishuRecipientsMsg = ref('')
+const feishuRecipientsOk = ref(false)
 
 async function loadSkills() {
   loadingSkills.value = true
@@ -195,18 +479,72 @@ async function loadSkills() {
   }
 }
 
+function onSkillCheckboxChange(name: string, e: Event) {
+  const t = e.target
+  if (t instanceof HTMLInputElement) void toggleSkill(name, t.checked)
+}
+
 async function toggleSkill(name: string, enabled: boolean) {
   togglingSkill.value = name
+  skillsMsg.value = ''
   try {
-    await fetch(`/api/settings/skills/${name}`, {
+    const res = await fetch(`/api/settings/skills/${name}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled }),
     })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      throw new Error(data.detail || `HTTP ${res.status}`)
+    }
     const skill = skills.value.find(s => s.name === name)
-    if (skill) skill.enabled = enabled
+    if (skill) skill.enabled = !!data.enabled
+    skillsMsgOk.value = true
+    skillsMsg.value = `已${data.enabled ? '启用' : '禁用'} ${name}`
+  } catch (e: any) {
+    // 后端失败时，立即回滚为后端真实状态，避免“前端看起来开了但实际不可用”
+    await loadSkills()
+    skillsMsgOk.value = false
+    skillsMsg.value = e?.message || '技能状态更新失败'
   } finally {
     togglingSkill.value = null
+  }
+}
+
+async function loadFeishuRecipients() {
+  loadingFeishuRecipients.value = true
+  feishuRecipientsMsg.value = ''
+  try {
+    // 先把当前表单中的飞书关键字段落库，避免“界面已改但拉取仍用旧配置”
+    const patch: Record<string, unknown> = {
+      feishu_app_id: (runtimeForm.value.feishu_app_id || '').trim() || null,
+      feishu_default_open_id: (runtimeForm.value.feishu_default_open_id || '').trim() || null,
+    }
+    const sec = (runtimeForm.value.feishu_app_secret || '').trim()
+    if (sec && sec !== '***') {
+      patch.feishu_app_secret = sec
+    }
+    await api.putRuntimeSettings(patch)
+
+    const items = await api.fetchFeishuRecipients()
+    feishuRecipients.value = items
+    const current = String(runtimeForm.value.feishu_default_open_id || '').trim()
+    const hasCurrent = !!items.find((u) => u.open_id === current)
+    if (items.length === 1 && !hasCurrent) {
+      // 只有一个可见成员时自动回填，避免“拉取成功但上方仍显示旧值”的错觉
+      runtimeForm.value.feishu_default_open_id = items[0].open_id
+    } else if (items.length > 0 && !hasCurrent) {
+      // 当前值不在可见列表里时，默认切到第一项，减少发送到历史错误 OpenID 的风险
+      runtimeForm.value.feishu_default_open_id = items[0].open_id
+    }
+    feishuRecipientsOk.value = true
+    feishuRecipientsMsg.value = `已拉取 ${items.length} 个可见成员`
+  } catch (e: any) {
+    feishuRecipients.value = []
+    feishuRecipientsOk.value = false
+    feishuRecipientsMsg.value = e?.message || '拉取失败'
+  } finally {
+    loadingFeishuRecipients.value = false
   }
 }
 
@@ -294,16 +632,646 @@ async function saveMcpConfig() {
 
 // ── 生命周期 ──────────────────────────────────────────────────────────────────
 
+const RUNTIME_KEYS_MANAGED_ELSEWHERE = new Set([
+  'llm_providers_json',
+  'active_llm_provider_id',
+  'embedding_providers_json',
+  'active_embedding_provider_id',
+  'azure_openai_api_key',
+  'azure_openai_endpoint',
+  'azure_openai_api_version',
+  'azure_openai_deployment',
+  'azure_openai_embedding_deployment',
+  'embedding_provider',
+  'embedding_api_key',
+  'embedding_base_url',
+  'embedding_model',
+  'user_id',
+])
+
+interface LlmProviderRow {
+  id: string
+  name: string
+  kind: 'openai' | 'azure'
+  base_url: string
+  endpoint: string
+  api_version: string
+  api_key: string
+  model: string
+  deployment: string
+}
+
+function emptyLlmRow(): LlmProviderRow {
+  return {
+    id: '',
+    name: '',
+    kind: 'openai',
+    base_url: '',
+    endpoint: '',
+    api_version: '',
+    api_key: '',
+    model: '',
+    deployment: '',
+  }
+}
+
+interface EmbeddingProviderRow {
+  id: string
+  name: string
+  kind: 'openai' | 'azure'
+  base_url: string
+  endpoint: string
+  api_version: string
+  api_key: string
+  model: string
+  deployment: string
+  dimensions: string
+}
+
+function emptyEmbeddingRow(): EmbeddingProviderRow {
+  return {
+    id: '',
+    name: '',
+    kind: 'openai',
+    base_url: '',
+    endpoint: '',
+    api_version: '',
+    api_key: '',
+    model: '',
+    deployment: '',
+    dimensions: '',
+  }
+}
+
+const runtimeForm = ref<Record<string, string>>({})
+const llmRows = ref<LlmProviderRow[]>([emptyLlmRow()])
+const embeddingRows = ref<EmbeddingProviderRow[]>([emptyEmbeddingRow()])
+const initialDbPath = ref('')
+
+const BASIC_CONFIG_KEYS = [
+  'tavily_api_key',
+  'feishu_app_id',
+  'feishu_app_secret',
+  'feishu_default_open_id',
+  'max_registered_users',
+]
+
+const ADVANCED_OPS_CONFIG_KEYS = [
+//   'feishu_default_folder_token',
+  'feishu_wiki_node_token',
+  'feishu_wiki_base_url',
+  'db_path',
+  'sqlite_timeout_seconds',
+  'jwt_secret',
+  'mem0_dir',
+]
+
+const MIGRATION_COMPAT_CONFIG_KEYS = [
+  'memory_enable_legacy_read',
+  'memory_dual_write_legacy',
+  'memory_legacy_model',
+  'memory_legacy_collection',
+  'memory_legacy_path',
+]
+
+const CONFIG_META: Record<string, { label: string; desc: string; usage: string }> = {
+  tavily_api_key: {
+    label: 'Tavily 搜索密钥',
+    desc: '联网搜索功能使用的 API Key。',
+    usage: '需要网页搜索时填写；不填则禁用搜索工具。',
+  },
+  feishu_app_id: {
+    label: '飞书 App ID',
+    desc: '飞书应用身份标识。',
+    usage: '配合飞书密钥一起填写后，助手可调用飞书能力。',
+  },
+  feishu_app_secret: {
+    label: '飞书 App Secret',
+    desc: '飞书应用密钥。',
+    usage: '与 App ID 成对使用，请妥善保管。',
+  },
+  feishu_default_open_id: {
+    label: '飞书默认接收人 OpenID',
+    desc: '未指定接收人时，默认消息目标。',
+    usage: '可选；填后发送消息可省略接收人。',
+  },
+  feishu_default_folder_token: {
+    label: '飞书默认文件夹 Token',
+    desc: '创建文档时使用的默认目录。',
+    usage: '可选；用于自动归档文档。',
+  },
+  feishu_wiki_node_token: {
+    label: '飞书知识库节点 Token',
+    desc: '写入飞书知识库时使用的节点。',
+    usage: '仅在知识库写入场景需要。',
+  },
+  feishu_wiki_base_url: {
+    label: '飞书知识库地址',
+    desc: '飞书知识库页面基础地址。',
+    usage: '用于生成可点击链接，通常为团队 wiki 根地址。',
+  },
+  user_id: {
+    label: '默认用户 ID',
+    desc: '系统内部使用的默认用户标识。',
+    usage: '单用户场景一般保持默认即可。',
+  },
+  max_registered_users: {
+    label: '最大注册用户数',
+    desc: '允许注册的账户数量上限。',
+    usage: '达到上限后将拒绝新用户注册。',
+  },
+  db_path: {
+    label: '主数据库路径',
+    desc: '对话与业务数据 SQLite 文件路径。',
+    usage: '修改后需自行迁移旧数据，避免数据丢失。',
+  },
+  sqlite_timeout_seconds: {
+    label: 'SQLite 超时（秒）',
+    desc: '数据库锁等待超时时间。',
+    usage: '并发较高可适当调大，如 30 或 60。',
+  },
+  jwt_secret: {
+    label: 'JWT 签名密钥',
+    desc: '登录令牌签名用密钥。',
+    usage: '建议使用高强度随机字符串并定期轮换。',
+  },
+  mem0_dir: {
+    label: 'mem0 数据目录',
+    desc: 'mem0 存储历史与索引的位置。',
+    usage: '留空将使用默认目录 ~/.mem0。',
+  },
+  memory_enable_legacy_read: {
+    label: '兼容读取旧记忆',
+    desc: '是否读取旧版记忆数据（0 关 / 1 开）。',
+    usage: '迁移期可开；稳定后建议关。',
+  },
+  memory_dual_write_legacy: {
+    label: '双写旧记忆',
+    desc: '是否同时写入旧版记忆（0 关 / 1 开）。',
+    usage: '仅迁移阶段短期开启。',
+  },
+  memory_legacy_model: {
+    label: '旧记忆向量模型',
+    desc: '旧版记忆系统使用的 embedding 模型名。',
+    usage: '仅兼容旧链路时需要维护。',
+  },
+  memory_legacy_collection: {
+    label: '旧记忆集合名',
+    desc: '旧版向量库中的集合名称。',
+    usage: '需与旧数据中的集合名一致。',
+  },
+  memory_legacy_path: {
+    label: '旧记忆存储路径',
+    desc: '旧版记忆向量数据目录。',
+    usage: '用于读取历史数据；新部署可不改。',
+  },
+}
+
+const sortedRuntimeKeys = computed(() =>
+  Object.keys(runtimeForm.value)
+    .filter((k) => !RUNTIME_KEYS_MANAGED_ELSEWHERE.has(k))
+    .sort(),
+)
+
+function mergeKnownWithDynamic(known: string[], dynamic: string[]): string[] {
+  const set = new Set<string>(known)
+  for (const k of dynamic) set.add(k)
+  return Array.from(set)
+}
+
+function getConfigLabel(key: string): string {
+  return CONFIG_META[key]?.label ?? key
+}
+
+function getConfigTooltip(key: string): string {
+  const m = CONFIG_META[key]
+  if (!m) return `配置项：${key}`
+  return `${m.label}\n\n含义：${m.desc}\n使用：${m.usage}`
+}
+
+const basicConfigKeys = computed(() =>
+  mergeKnownWithDynamic(
+    BASIC_CONFIG_KEYS,
+    sortedRuntimeKeys.value.filter((k) =>
+      k.startsWith('tavily_') || k === 'feishu_app_id' || k === 'feishu_app_secret' || k === 'max_registered_users',
+    ),
+  ),
+)
+
+const advancedOpsConfigKeys = computed(() =>
+  mergeKnownWithDynamic(
+    ADVANCED_OPS_CONFIG_KEYS,
+    sortedRuntimeKeys.value.filter(
+      (k) =>
+        (k.startsWith('feishu_') && !basicConfigKeys.value.includes(k))
+        || ['db_path', 'sqlite_timeout_seconds', 'jwt_secret', 'mem0_dir'].includes(k),
+    ),
+  ),
+)
+
+const migrationCompatConfigKeys = computed(() =>
+  mergeKnownWithDynamic(
+    MIGRATION_COMPAT_CONFIG_KEYS,
+    sortedRuntimeKeys.value.filter((k) => k.startsWith('memory_')),
+  ),
+)
+
+const activeLlmIdOptions = computed(() =>
+  llmRows.value.map((r) => r.id.trim()).filter(Boolean),
+)
+const activeEmbeddingIdOptions = computed(() =>
+  embeddingRows.value.map((r) => r.id.trim()).filter(Boolean),
+)
+
+const savingRuntime = ref(false)
+const runtimeSaveMsg = ref('')
+const savingActiveLlmId = ref(false)
+const llmSavingByIndex = ref<Record<number, boolean>>({})
+const llmRowMsgByIndex = ref<Record<number, string>>({})
+const llmRowOkByIndex = ref<Record<number, boolean>>({})
+const embeddingSavingByIndex = ref<Record<number, boolean>>({})
+const embeddingRowMsgByIndex = ref<Record<number, string>>({})
+const embeddingRowOkByIndex = ref<Record<number, boolean>>({})
+
+function isRuntimeSecretKey(k: string) {
+  const lk = k.toLowerCase()
+  return lk.endsWith('_key') || lk.endsWith('_secret') || lk.includes('password')
+}
+
+function parseProvidersFromForm() {
+  const raw = (runtimeForm.value.llm_providers_json || '').trim() || '[]'
+  try {
+    const p = JSON.parse(raw) as unknown
+    if (!Array.isArray(p) || p.length === 0) {
+      llmRows.value = [emptyLlmRow()]
+      return
+    }
+    llmRows.value = p.map((x: Record<string, unknown>) => ({
+      id: String(x.id ?? ''),
+      name: String(x.name ?? x.id ?? ''),
+      kind: x.kind === 'azure' ? 'azure' : 'openai',
+      base_url: String(x.base_url ?? ''),
+      endpoint: String(x.endpoint ?? ''),
+      api_version: String(x.api_version ?? ''),
+      api_key: String(x.api_key ?? ''),
+      model: String(x.model ?? ''),
+      deployment: String(x.deployment ?? ''),
+    }))
+  } catch {
+    llmRows.value = [emptyLlmRow()]
+  }
+}
+
+function buildLlmProviderPayload(row: LlmProviderRow): Record<string, string> {
+  const uniqueName = row.name.trim()
+  const o: Record<string, string> = {
+    id: uniqueName,
+    name: uniqueName,
+    kind: row.kind,
+  }
+  if (row.kind === 'openai') {
+    if (row.base_url.trim()) o.base_url = row.base_url.trim()
+    if (row.api_key.trim()) o.api_key = row.api_key.trim()
+    if (row.model.trim()) o.model = row.model.trim()
+  } else {
+    if (row.endpoint.trim()) o.endpoint = row.endpoint.trim()
+    if (row.api_version.trim()) o.api_version = row.api_version.trim()
+    if (row.api_key.trim()) o.api_key = row.api_key.trim()
+    if (row.deployment.trim()) o.deployment = row.deployment.trim()
+  }
+  return o
+}
+
+function syncLlmRowsToFormJson() {
+  const list = llmRows.value
+    .filter((r) => r.name.trim())
+    .map((r) => buildLlmProviderPayload(r))
+  runtimeForm.value.llm_providers_json = JSON.stringify(list)
+}
+
+function addLlmRow() {
+  llmRows.value.push(emptyLlmRow())
+}
+
+function removeLlmRow(i: number) {
+  if (llmRows.value.length <= 1) return
+  llmRows.value.splice(i, 1)
+}
+
+function parseEmbeddingsFromForm() {
+  const raw = (runtimeForm.value.embedding_providers_json || '').trim() || '[]'
+  try {
+    const p = JSON.parse(raw) as unknown
+    if (!Array.isArray(p) || p.length === 0) {
+      embeddingRows.value = [emptyEmbeddingRow()]
+      return
+    }
+    embeddingRows.value = p.map((x: Record<string, unknown>) => ({
+      id: String(x.id ?? ''),
+      name: String(x.name ?? x.id ?? ''),
+      kind: x.kind === 'azure' ? 'azure' : 'openai',
+      base_url: String(x.base_url ?? ''),
+      endpoint: String(x.endpoint ?? ''),
+      api_version: String(x.api_version ?? ''),
+      api_key: String(x.api_key ?? ''),
+      model: String(x.model ?? ''),
+      deployment: String(x.deployment ?? ''),
+      dimensions: String(x.dimensions ?? ''),
+    }))
+  } catch {
+    embeddingRows.value = [emptyEmbeddingRow()]
+  }
+}
+
+function buildEmbeddingProviderPayload(row: EmbeddingProviderRow): Record<string, string | number> {
+  const uniqueName = row.name.trim()
+  const o: Record<string, string | number> = {
+    id: uniqueName,
+    name: uniqueName,
+    kind: row.kind,
+  }
+  if (row.kind === 'openai') {
+    if (row.base_url.trim()) o.base_url = row.base_url.trim()
+    if (row.api_key.trim()) o.api_key = row.api_key.trim()
+    if (row.model.trim()) o.model = row.model.trim()
+  } else {
+    if (row.endpoint.trim()) o.endpoint = row.endpoint.trim()
+    if (row.api_version.trim()) o.api_version = row.api_version.trim()
+    if (row.api_key.trim()) o.api_key = row.api_key.trim()
+    if (row.deployment.trim()) o.deployment = row.deployment.trim()
+  }
+  if (row.dimensions.trim()) {
+    const dim = parseInt(row.dimensions.trim(), 10)
+    if (Number.isFinite(dim) && dim > 0) o.dimensions = dim
+  }
+  return o
+}
+
+function syncEmbeddingRowsToFormJson() {
+  const list = embeddingRows.value
+    .filter((r) => r.name.trim())
+    .map((r) => buildEmbeddingProviderPayload(r))
+  runtimeForm.value.embedding_providers_json = JSON.stringify(list)
+}
+
+function upsertById(list: Record<string, unknown>[], item: Record<string, unknown>) {
+  const id = String(item.id || '')
+  const next = list.filter((x) => String(x.id || '') !== id)
+  next.push(item)
+  return next
+}
+
+function hasDuplicateLlmName(name: string, idx: number): boolean {
+  const target = name.trim()
+  if (!target) return false
+  return llmRows.value.some((r, i) => i !== idx && r.name.trim() === target)
+}
+
+function normalizeDim(v: unknown): number | null {
+  const s = String(v ?? '').trim()
+  if (!s) return null
+  const n = parseInt(s, 10)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+async function saveOneLlmProvider(idx: number) {
+  const row = llmRows.value[idx]
+  if (!row || !row.name.trim()) {
+    llmRowOkByIndex.value[idx] = false
+    llmRowMsgByIndex.value[idx] = '名称不能为空'
+    return
+  }
+  if (hasDuplicateLlmName(row.name, idx)) {
+    llmRowOkByIndex.value[idx] = false
+    llmRowMsgByIndex.value[idx] = '名称重复：每个模型提供方名称必须唯一'
+    return
+  }
+  const provider = buildLlmProviderPayload(row)
+  llmSavingByIndex.value[idx] = true
+  llmRowMsgByIndex.value[idx] = ''
+  try {
+    await api.validateProvider('llm', provider, {
+      azure_openai_endpoint: runtimeForm.value.azure_openai_endpoint || '',
+      azure_openai_api_version: runtimeForm.value.azure_openai_api_version || '',
+      azure_openai_api_key: runtimeForm.value.azure_openai_api_key || '',
+      azure_openai_deployment: runtimeForm.value.azure_openai_deployment || '',
+    })
+    // 以服务端最新配置为准合并，避免本地 runtimeForm 过期导致覆盖他人/另一条配置
+    const latest = await api.fetchRuntimeSettings()
+    const latestRaw = String(latest.llm_providers_json || '[]')
+    const current = JSON.parse(latestRaw || '[]') as Record<string, unknown>[]
+    const providers = upsertById(Array.isArray(current) ? current : [], provider)
+    const values: Record<string, unknown> = {
+      llm_providers_json: JSON.stringify(providers),
+      active_llm_provider_id: runtimeForm.value.active_llm_provider_id || String(provider.id),
+      azure_openai_endpoint: runtimeForm.value.azure_openai_endpoint || null,
+      azure_openai_api_version: runtimeForm.value.azure_openai_api_version || null,
+      azure_openai_api_key: runtimeForm.value.azure_openai_api_key === '***' ? undefined : (runtimeForm.value.azure_openai_api_key || null),
+      azure_openai_deployment: runtimeForm.value.azure_openai_deployment || null,
+    }
+    Object.keys(values).forEach((k) => values[k] === undefined && delete values[k])
+    await api.putRuntimeSettings(values)
+    llmRowOkByIndex.value[idx] = true
+    llmRowMsgByIndex.value[idx] = '校验通过并已保存'
+    window.dispatchEvent(new Event('mygpt-llm-providers-updated'))
+    await reloadAllSettingsData()
+  } catch (e: unknown) {
+    llmRowOkByIndex.value[idx] = false
+    llmRowMsgByIndex.value[idx] = e instanceof Error ? e.message : '保存失败'
+  } finally {
+    llmSavingByIndex.value[idx] = false
+  }
+}
+
+async function saveOneEmbeddingProvider(idx: number) {
+  const row = embeddingRows.value[idx]
+  if (!row || !row.name.trim()) {
+    embeddingRowOkByIndex.value[idx] = false
+    embeddingRowMsgByIndex.value[idx] = '名称不能为空'
+    return
+  }
+  const provider = buildEmbeddingProviderPayload(row)
+  embeddingSavingByIndex.value[idx] = true
+  embeddingRowMsgByIndex.value[idx] = ''
+  try {
+    const latest = await api.fetchRuntimeSettings()
+    const latestRaw = String(latest.embedding_providers_json || '[]')
+    const currentRaw = JSON.parse(latestRaw || '[]') as Record<string, unknown>[]
+    const currentList = Array.isArray(currentRaw) ? currentRaw : []
+    const oldProvider = currentList.find((x) => String(x.id || '') === String(provider.id))
+    const oldDim = normalizeDim(oldProvider?.dimensions ?? oldProvider?.embedding_dims)
+    const newDim = normalizeDim((provider as Record<string, unknown>).dimensions)
+    const dimChanged = oldProvider && oldDim !== newDim
+
+    await api.validateProvider('embedding', provider, {
+      azure_openai_endpoint: runtimeForm.value.azure_openai_endpoint || '',
+      azure_openai_api_version: runtimeForm.value.azure_openai_api_version || '',
+      azure_openai_api_key: runtimeForm.value.azure_openai_api_key || '',
+      azure_openai_embedding_deployment: runtimeForm.value.azure_openai_embedding_deployment || '',
+    })
+
+    if (dimChanged) {
+      const ok = await openConfirm({
+        title: '检测到向量维度变更',
+        message: `提供方 ${String(provider.id)} 的维度从 ${oldDim ?? '自动'} 变为 ${newDim ?? '自动'}。\n是否清理旧向量目录？`,
+        confirmText: '清理旧目录',
+      })
+      if (ok && oldProvider) {
+        await api.cleanupEmbeddingStore(oldProvider)
+      }
+    }
+
+    const providers = upsertById(currentList, provider)
+    const values: Record<string, unknown> = {
+      embedding_providers_json: JSON.stringify(providers),
+      active_embedding_provider_id: runtimeForm.value.active_embedding_provider_id || String(provider.id),
+      azure_openai_endpoint: runtimeForm.value.azure_openai_endpoint || null,
+      azure_openai_api_version: runtimeForm.value.azure_openai_api_version || null,
+      azure_openai_api_key: runtimeForm.value.azure_openai_api_key === '***' ? undefined : (runtimeForm.value.azure_openai_api_key || null),
+      azure_openai_embedding_deployment: runtimeForm.value.azure_openai_embedding_deployment || null,
+    }
+    Object.keys(values).forEach((k) => values[k] === undefined && delete values[k])
+    await api.putRuntimeSettings(values)
+    embeddingRowOkByIndex.value[idx] = true
+    embeddingRowMsgByIndex.value[idx] = '校验通过并已保存'
+    await reloadAllSettingsData()
+  } catch (e: unknown) {
+    embeddingRowOkByIndex.value[idx] = false
+    embeddingRowMsgByIndex.value[idx] = e instanceof Error ? e.message : '保存失败'
+  } finally {
+    embeddingSavingByIndex.value[idx] = false
+  }
+}
+
+function addEmbeddingRow() {
+  embeddingRows.value.push(emptyEmbeddingRow())
+}
+
+function removeEmbeddingRow(i: number) {
+  if (embeddingRows.value.length <= 1) return
+  embeddingRows.value.splice(i, 1)
+}
+
+async function loadRuntimeSettings() {
+  try {
+    const d = await api.fetchRuntimeSettings()
+    const next: Record<string, string> = {}
+    for (const k of Object.keys(d).sort()) {
+      const v = d[k as keyof typeof d]
+      if (v === null || v === undefined) next[k] = ''
+      else if (typeof v === 'boolean') next[k] = v ? 'true' : 'false'
+      else next[k] = String(v)
+    }
+    if (!('llm_providers_json' in next)) next.llm_providers_json = '[]'
+    if (!('active_llm_provider_id' in next)) next.active_llm_provider_id = ''
+    if (!('embedding_providers_json' in next)) next.embedding_providers_json = '[]'
+    if (!('active_embedding_provider_id' in next)) next.active_embedding_provider_id = ''
+    runtimeForm.value = next
+    initialDbPath.value = next.db_path ?? ''
+    parseProvidersFromForm()
+    parseEmbeddingsFromForm()
+  } catch (e: unknown) {
+    runtimeSaveMsg.value = e instanceof Error ? e.message : '加载失败'
+  }
+}
+
+async function reloadAllSettingsData() {
+  await Promise.all([
+    loadRuntimeSettings(),
+    loadSkills(),
+    loadMcpConfig(),
+  ])
+}
+
+async function saveActiveLlmProviderId() {
+  savingActiveLlmId.value = true
+  runtimeSaveMsg.value = ''
+  try {
+    await api.putRuntimeSettings({
+      active_llm_provider_id: (runtimeForm.value.active_llm_provider_id || '').trim() || null,
+    })
+    runtimeSaveMsg.value = '默认提供方已保存'
+    window.dispatchEvent(new Event('mygpt-llm-providers-updated'))
+    await reloadAllSettingsData()
+  } catch (e: unknown) {
+    runtimeSaveMsg.value = e instanceof Error ? e.message : '保存失败'
+  } finally {
+    savingActiveLlmId.value = false
+  }
+}
+
+async function saveRuntimeSettings() {
+  syncLlmRowsToFormJson()
+  syncEmbeddingRowsToFormJson()
+  const curDb = (runtimeForm.value.db_path || '').trim()
+  if (curDb && curDb !== (initialDbPath.value || '').trim()) {
+    const ok = await openConfirm({
+      title: '确认修改数据库路径',
+      message:
+        '将使用新的 SQLite 路径；原库中的对话与账号不会自动迁移。确定要继续吗？',
+      confirmText: '仍要保存',
+    })
+    if (!ok) return
+  }
+
+  savingRuntime.value = true
+  runtimeSaveMsg.value = ''
+  try {
+    const values: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(runtimeForm.value)) {
+      if (v === '***') continue
+      if (v.trim() === '') {
+        values[k] = null
+        continue
+      }
+      if (k === 'max_registered_users') {
+        const n = parseInt(v, 10)
+        values[k] = Number.isFinite(n) ? n : null
+        continue
+      }
+      if (k === 'sqlite_timeout_seconds') {
+        values[k] = parseFloat(v)
+        continue
+      }
+      values[k] = v
+    }
+    await api.putRuntimeSettings(values)
+    runtimeSaveMsg.value = '已保存。可刷新对话页以下拉更新模型列表。'
+    await loadRuntimeSettings()
+  } catch (e: unknown) {
+    runtimeSaveMsg.value = e instanceof Error ? e.message : '保存失败'
+  } finally {
+    savingRuntime.value = false
+  }
+}
+
 watch(() => props.visible, (val) => {
   if (val) {
     loadSkills()
     loadMcpConfig()
+    loadRuntimeSettings()
     mcpSaveResult.value = null
+    runtimeSaveMsg.value = ''
     oldPw.value = ''
     newPw.value = ''
     confirmPw.value = ''
     pwError.value = ''
     pwSuccess.value = false
+  }
+})
+
+watch(activeTab, async (tab) => {
+  if (!props.visible) return
+  if (tab === 'skills') {
+    await loadSkills()
+    return
+  }
+  if (tab === 'mcp') {
+    await loadMcpConfig()
+    return
+  }
+  if (tab === 'llm' || tab === 'embedding' || tab === 'env') {
+    await loadRuntimeSettings()
   }
 })
 </script>
@@ -324,13 +1292,214 @@ watch(() => props.visible, (val) => {
   background: var(--panel-bg);
   border: 1px solid var(--border);
   border-radius: 16px;
-  width: 560px;
-  max-width: 95vw;
+  width: min(820px, 96vw);
   max-height: 80vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   box-shadow: var(--modal-shadow);
+}
+.env-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  padding: 10px 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  margin-bottom: 12px;
+  border: 1px solid var(--border-light);
+  line-height: 1.45;
+}
+.env-grid {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) 1fr;
+  gap: 8px 12px;
+  align-items: start;
+  max-height: 48vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.env-grid-row {
+  display: contents;
+}
+.env-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding-top: 8px;
+  word-break: break-all;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.env-label-main {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.env-hint-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-light);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: help;
+}
+.env-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.env-input-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.env-inline-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.env-inline-msg {
+  font-size: 12px;
+}
+.env-inline-msg.ok {
+  color: var(--accent);
+}
+.env-inline-msg.err {
+  color: var(--danger, #c0392b);
+}
+.env-label-warn {
+  color: var(--danger, #c0392b);
+  font-weight: 600;
+}
+.db-path-warn {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 8px 0 0;
+  line-height: 1.45;
+}
+.llm-section {
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  background: var(--bg-hover);
+}
+.llm-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+.migration-section {
+  border-color: rgba(239, 68, 68, 0.35);
+}
+.migration-warn {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--danger, #c0392b);
+}
+.llm-section-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 0 0 12px;
+  line-height: 1.45;
+}
+.llm-card {
+  background: var(--panel-bg);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+.llm-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.llm-card-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.llm-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.btn-text {
+  background: none;
+  border: none;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.btn-secondary.mini {
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.btn-text:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.btn-text.danger {
+  color: var(--danger, #c0392b);
+}
+.btn-text:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.llm-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+}
+.llm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.llm-kind-hint {
+  grid-column: span 2;
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.llm-field.span-2 {
+  grid-column: span 2;
+}
+.llm-add-btn {
+  margin-bottom: 12px;
+}
+.llm-active-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mini-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.llm-json-advanced {
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.llm-json-advanced summary {
+  cursor: pointer;
+  margin-bottom: 8px;
 }
 
 .panel-header {
@@ -364,9 +1533,13 @@ watch(() => props.visible, (val) => {
 
 .tabs {
   display: flex;
+  flex-wrap: nowrap;
+  overflow-x: visible;
   gap: 4px;
   padding: 12px 24px 0;
   border-bottom: 1px solid var(--border-light);
+  align-items: flex-end;
+  min-height: 48px;
 }
 
 .tab-btn {
@@ -374,6 +1547,8 @@ watch(() => props.visible, (val) => {
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
+  flex: 0 0 auto;
+  white-space: nowrap;
   color: var(--text-secondary);
   font-size: 14px;
   font-weight: 500;
@@ -438,6 +1613,12 @@ watch(() => props.visible, (val) => {
   font-size: 12px;
   color: var(--text-secondary);
   line-height: 1.4;
+}
+
+.skill-unavailable {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--danger, #c0392b);
 }
 
 .skill-tools {
@@ -641,8 +1822,16 @@ watch(() => props.visible, (val) => {
   border-radius: 8px;
   color: var(--text-primary);
   font-size: 14px;
+  min-height: 42px;
+  height: 42px;
+  box-sizing: border-box;
+  line-height: 1.2;
   outline: none;
   transition: border-color 0.15s;
+}
+select.pw-input {
+  padding-top: 0;
+  padding-bottom: 0;
 }
 .pw-input:focus { border-color: var(--accent); }
 .pw-input::placeholder { color: var(--text-muted); }

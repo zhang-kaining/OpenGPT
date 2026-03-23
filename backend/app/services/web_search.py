@@ -1,23 +1,13 @@
 from tavily import TavilyClient
 from app.config import get_settings
 
-settings = get_settings()
-
-_client: TavilyClient | None = None
-
-
-def get_tavily_client() -> TavilyClient:
-    global _client
-    if _client is None:
-        _client = TavilyClient(api_key=settings.tavily_api_key)
-    return _client
-
 
 def search(query: str, max_results: int = 5) -> list[dict]:
     """执行网页搜索，返回结构化结果列表"""
-    if not settings.tavily_api_key:
+    s = get_settings()
+    if not s.tavily_api_key:
         return []
-    client = get_tavily_client()
+    client = TavilyClient(api_key=s.tavily_api_key)
     response = client.search(
         query=query,
         search_depth="advanced",

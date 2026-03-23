@@ -3,6 +3,7 @@ import json
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from app.models.schemas import MessageCreate
+from app.config import get_settings
 from app.services import conversation as conv_service
 from app.services import memory as mem_service
 from app.services import azure_openai as oai_service
@@ -19,6 +20,11 @@ def sse(data: str) -> str:
 @router.post("")
 async def chat(request: Request, body: MessageCreate, user: dict = Depends(get_current_user)):
     user_id = user["id"]
+    try:
+        # 先做提供方预检：未配置/配置非法时直接返回 400，而不是进入 SSE 流程后才报错
+        oai_service.resolve_llm(get_settings(), body.llm_provider_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     if body.conversation_id:
         conv = await conv_service.get_conversation(body.conversation_id, user_id)
@@ -66,7 +72,9 @@ async def chat(request: Request, body: MessageCreate, user: dict = Depends(get_c
 
         yield sse(json.dumps({"type": "conv_id", "conv_id": conv_id}, ensure_ascii=False))
 
-        async for event in oai_service.stream_chat(messages, memories, body.enable_search):
+        async for event in oai_service.stream_chat(
+            messages, memories, body.enable_search, body.llm_provider_id
+        ):
             if await request.is_disconnected():
                 disconnected = True
                 break

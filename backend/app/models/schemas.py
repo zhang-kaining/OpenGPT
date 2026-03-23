@@ -9,6 +9,7 @@ class MessageCreate(BaseModel):
     folder_id: Optional[str] = None  # 新建对话时归入该文件夹
     enable_search: bool = True
     images: Optional[list[str]] = None  # base64 data URLs, e.g. "data:image/png;base64,..."
+    llm_provider_id: Optional[str] = None  # 与设置里 llm_providers 某项 id 对应；空则用默认
 
 
 class Message(BaseModel):

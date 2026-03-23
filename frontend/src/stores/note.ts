@@ -74,6 +74,24 @@ export const useNoteStore = defineStore('note', () => {
     }
   }
 
+  async function renameNote(id: string, title: string) {
+    const t = title.trim() || '未命名'
+    let content: string
+    if (id === currentNoteId.value) {
+      content = currentContent.value
+    } else {
+      const full = await api.getNote(id)
+      content = full.content ?? ''
+    }
+    await api.saveNote(id, t, content)
+    const note = notes.value.find(n => n.id === id)
+    if (note) {
+      note.title = t
+      note.updated_at = new Date().toISOString()
+    }
+    if (currentNoteId.value === id) currentTitle.value = t
+  }
+
   async function createFolder(name: string, parentId?: string | null) {
     const folder = await api.createNoteFolder(name, parentId)
     folders.value.push(folder)
@@ -160,6 +178,7 @@ export const useNoteStore = defineStore('note', () => {
     newNote,
     saveCurrentNote,
     deleteNote,
+    renameNote,
     createFolder,
     deleteFolder,
     expandFolder,

@@ -2,6 +2,9 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Conversation, ConversationFolder, Message, MemoryItem, Citation } from '@/types'
 import * as api from '@/services/api'
+import type { LlmProviderOption } from '@/services/api'
+
+const LLM_PROVIDER_LS_KEY = 'mygpt-selected-llm-provider-id'
 
 export const useChatStore = defineStore('chat', () => {
   const conversations = ref<Conversation[]>([])
@@ -16,6 +19,8 @@ export const useChatStore = defineStore('chat', () => {
   const searchQuery = ref('')
   const enableSearch = ref(true)
   const showMemoryPanel = ref(false)
+  const llmProviders = ref<LlmProviderOption[]>([])
+  const selectedLlmProviderId = ref('')
   let currentAbort: AbortController | null = null
 
   const currentConversation = computed(() =>
@@ -109,6 +114,18 @@ export const useChatStore = defineStore('chat', () => {
   async function sendMessage(content: string, images?: string[]) {
     if (!content.trim() && !images?.length) return
     if (isLoading.value) return
+    if (!llmProviders.value.length) {
+      const aiMsg: Message = {
+        id: `tmp-ai-${Date.now()}`,
+        conversation_id: currentConvId.value ?? '',
+        role: 'assistant',
+        content: '❌ 尚未配置任何对话模型。请先到「设置 -> 对话模型」添加至少一条提供方。',
+        citations: null,
+        created_at: new Date().toISOString(),
+      }
+      messages.value.push(aiMsg)
+      return
+    }
 
     isLoading.value = true
 
@@ -205,6 +222,7 @@ export const useChatStore = defineStore('chat', () => {
         currentAbort.signal,
         images,
         pendingFolderId.value,
+        selectedLlmProviderId.value || null,
       )
     } catch (e: any) {
       if (e?.name !== 'AbortError') {
@@ -230,6 +248,31 @@ export const useChatStore = defineStore('chat', () => {
     isLoading.value = false
   }
 
+  async function loadLlmCatalog() {
+    try {
+      const data = await api.fetchLlmCatalog()
+      llmProviders.value = data.providers || []
+      const ids = new Set((data.providers || []).map((p) => p.id))
+      const fromLs = (typeof localStorage !== 'undefined' && localStorage.getItem(LLM_PROVIDER_LS_KEY)) || ''
+      let picked = ''
+      if (fromLs && ids.has(fromLs)) picked = fromLs
+      else if (data.active_id && ids.has(data.active_id)) picked = data.active_id
+      else if (data.providers?.[0]?.id) picked = data.providers[0].id
+      selectedLlmProviderId.value = picked
+    } catch {
+      llmProviders.value = []
+    }
+  }
+
+  function persistLlmProviderSelection() {
+    const id = selectedLlmProviderId.value
+    if (typeof localStorage !== 'undefined') {
+      if (id) localStorage.setItem(LLM_PROVIDER_LS_KEY, id)
+      else localStorage.removeItem(LLM_PROVIDER_LS_KEY)
+    }
+    void api.putRuntimeSettings({ active_llm_provider_id: id || null }).catch(() => {})
+  }
+
   async function loadMemories() {
     memories.value = await api.getMemories()
   }
@@ -251,6 +294,8 @@ export const useChatStore = defineStore('chat', () => {
     searchQuery,
     enableSearch,
     showMemoryPanel,
+    llmProviders,
+    selectedLlmProviderId,
     currentConversation,
     filteredConversations,
     loadConversations,
@@ -268,5 +313,7 @@ export const useChatStore = defineStore('chat', () => {
     stopGeneration,
     loadMemories,
     deleteMemory,
+    loadLlmCatalog,
+    persistLlmProviderSelection,
   }
 })

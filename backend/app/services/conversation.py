@@ -5,17 +5,15 @@ from datetime import datetime, timezone
 from typing import Optional
 from app.config import get_settings
 
-settings = get_settings()
-
 
 async def get_db():
-    return await aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds)
+    return await aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds)
 
 
 async def init_db():
     import os
-    os.makedirs(os.path.dirname(settings.db_path), exist_ok=True)
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    os.makedirs(os.path.dirname(get_settings().db_path), exist_ok=True)
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS conversation_folders (
@@ -75,7 +73,7 @@ async def create_conversation(
     conv_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     title = title or "新对话"
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         await db.execute(
             "INSERT INTO conversations (id, user_id, title, created_at, updated_at, folder_id) VALUES (?, ?, ?, ?, ?, ?)",
             (conv_id, user_id, title, now, now, folder_id),
@@ -85,7 +83,7 @@ async def create_conversation(
 
 
 async def list_conversations(user_id: str) -> list:
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT id, title, created_at, updated_at, folder_id FROM conversations WHERE user_id = ? ORDER BY updated_at DESC",
@@ -96,7 +94,7 @@ async def list_conversations(user_id: str) -> list:
 
 
 async def get_conversation(conv_id: str, user_id: str = "") -> Optional[dict]:
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         db.row_factory = aiosqlite.Row
         if user_id:
             sql = "SELECT * FROM conversations WHERE id = ? AND user_id = ?"
@@ -111,7 +109,7 @@ async def get_conversation(conv_id: str, user_id: str = "") -> Optional[dict]:
 
 async def update_conversation_title(conv_id: str, title: str):
     now = datetime.now(timezone.utc).isoformat()
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         await db.execute(
             "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
             (title, now, conv_id)
@@ -120,7 +118,7 @@ async def update_conversation_title(conv_id: str, title: str):
 
 
 async def delete_conversation(conv_id: str, user_id: str = ""):
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         if user_id:
             await db.execute("DELETE FROM conversations WHERE id = ? AND user_id = ?", (conv_id, user_id))
         else:
@@ -137,7 +135,7 @@ async def add_message(
     msg_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     citations_json = json.dumps(citations) if citations else None
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         await db.execute(
             "INSERT INTO messages (id, conversation_id, role, content, citations, created_at) VALUES (?, ?, ?, ?, ?, ?)",
             (msg_id, conversation_id, role, content, citations_json, now)
@@ -158,7 +156,7 @@ async def add_message(
 
 
 async def get_messages(conversation_id: str) -> list:
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC",
@@ -174,7 +172,7 @@ async def get_messages(conversation_id: str) -> list:
 
 
 async def search_conversations(user_id: str, query: str) -> list:
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT DISTINCT c.id, c.title, c.created_at, c.updated_at, c.folder_id FROM conversations c "
@@ -188,7 +186,7 @@ async def search_conversations(user_id: str, query: str) -> list:
 
 
 async def get_folder(folder_id: str, user_id: str) -> Optional[dict]:
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT * FROM conversation_folders WHERE id = ? AND user_id = ?",
@@ -199,7 +197,7 @@ async def get_folder(folder_id: str, user_id: str) -> Optional[dict]:
 
 
 async def list_folders(user_id: str) -> list:
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT id, parent_id, name, created_at, updated_at FROM conversation_folders WHERE user_id = ? ORDER BY name ASC",
@@ -219,7 +217,7 @@ async def create_folder(
             raise ValueError("父文件夹不存在或无权限")
     fid = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         await db.execute(
             "INSERT INTO conversation_folders (id, user_id, parent_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
             (fid, user_id, parent_id, name, now, now),
@@ -248,7 +246,7 @@ async def _folder_subtree_ids(db: aiosqlite.Connection, user_id: str, folder_id:
 
 
 async def delete_folder(user_id: str, folder_id: str) -> bool:
-    async with aiosqlite.connect(settings.db_path, timeout=settings.sqlite_timeout_seconds) as db:
+    async with aiosqlite.connect(get_settings().db_path, timeout=get_settings().sqlite_timeout_seconds) as db:
         ids = await _folder_subtree_ids(db, user_id, folder_id)
         if not ids:
             return False

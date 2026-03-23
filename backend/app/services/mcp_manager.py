@@ -46,6 +46,11 @@ class McpManager:
 
     async def load(self, config_path: Path = MCP_CONFIG_PATH) -> None:
         """读取 mcp.json，连接所有 MCP Server，加载工具列表"""
+        # 每次加载先清空旧状态，避免配置为空/解析失败时前端仍显示上次已加载工具
+        self._tool_definitions = []
+        self._tool_map = {}
+        self._available = False
+
         if not config_path.exists():
             logger.info("mcp.json 不存在，MCP 功能未启用")
             return

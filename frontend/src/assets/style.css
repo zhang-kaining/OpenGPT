@@ -124,8 +124,24 @@ html, body {
 .markdown-body h3 { font-size: 1.1em; }
 .markdown-body p { margin: 0.75em 0; }
 .markdown-body p:first-child { margin-top: 0; }
-.markdown-body ul, .markdown-body ol { padding-left: 1.6em; margin: 0.5em 0; }
-.markdown-body li { margin: 0.3em 0; }
+.markdown-body ul, .markdown-body ol {
+  margin: 0.5em 0;
+  list-style-position: outside;
+}
+.markdown-body ul { padding-left: 1.5em; }
+.markdown-body ol { padding-left: 1.8em; }
+.markdown-body li {
+  margin: 0.3em 0;
+  padding-left: 0.2em;
+  text-align: left;
+}
+.markdown-body li > p {
+  margin: 0;
+}
+.markdown-body ol li::marker {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
 .markdown-body blockquote {
   border-left: 3px solid var(--blockquote-border);
   padding-left: 1em;

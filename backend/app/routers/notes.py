@@ -6,11 +6,9 @@ from fastapi.responses import StreamingResponse
 from app.deps import get_current_user
 from app.models.schemas import NoteCreate, NoteSave, NoteFolderCreate, AiRefineRequest
 from app.services import note as note_service
-from app.services.azure_openai import get_client
-from app.config import get_settings
+from app.services.azure_openai import get_chat_client
 
 router = APIRouter(tags=["notes"])
-settings = get_settings()
 
 
 def sse(data: str) -> str:
@@ -96,12 +94,15 @@ async def ai_refine_note(
         {"role": "user", "content": f"{instruction}\n\n---\n\n{note['content']}"},
     ]
 
-    client = get_client()
+    try:
+        client, _kind, model = get_chat_client()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     async def event_generator():
         try:
             response = await client.chat.completions.create(
-                model=settings.azure_openai_deployment,
+                model=model,
                 messages=messages,
                 stream=True,
                 stream_options={"include_usage": True},

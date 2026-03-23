@@ -11,7 +11,7 @@ from app.services.auth import init_users_table
 from app.services.note import init_note_tables
 from app.services.skill_manager import get_skill_manager
 from app.services.mcp_manager import get_mcp_manager
-from app.routers import auth, chat, conversations, folders, memory, news, notes, skills
+from app.routers import auth, chat, conversations, folders, memory, news, notes, settings_runtime, skills
 from app.services import feishu as feishu_service
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -46,6 +46,7 @@ app.include_router(folders.router)
 app.include_router(memory.router)
 app.include_router(news.router)
 app.include_router(notes.router)
+app.include_router(settings_runtime.router)
 app.include_router(skills.router)
 
 

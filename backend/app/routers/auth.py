@@ -5,7 +5,6 @@ from app.services import auth as auth_service
 from app.deps import get_current_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-settings = get_settings()
 
 
 class RegisterBody(BaseModel):
@@ -35,12 +34,13 @@ async def register(body: RegisterBody):
     if existing:
         raise HTTPException(409, "用户名已存在")
 
-    if settings.max_registered_users > 0:
+    s = get_settings()
+    if s.max_registered_users > 0:
         n = await auth_service.count_users()
-        if n >= settings.max_registered_users:
+        if n >= s.max_registered_users:
             raise HTTPException(
                 403,
-                f"注册人数已达上限（最多 {settings.max_registered_users} 人），请联系管理员",
+                f"注册人数已达上限（最多 {s.max_registered_users} 人），请联系管理员",
             )
 
     user = await auth_service.create_user(body.username, body.password, body.display_name)

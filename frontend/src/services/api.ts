@@ -41,6 +41,81 @@ export async function register(username: string, password: string, displayName?:
   return res.json()
 }
 
+export async function fetchRuntimeSettings(): Promise<Record<string, unknown>> {
+  const res = await authFetch(`${BASE}/settings/runtime`)
+  return res.json()
+}
+
+export async function putRuntimeSettings(values: Record<string, unknown>) {
+  const res = await authFetch(`${BASE}/settings/runtime`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ values }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || `HTTP ${res.status}`)
+  }
+}
+
+export async function validateProvider(
+  providerType: 'llm' | 'embedding',
+  provider: Record<string, unknown>,
+  globals: Record<string, unknown>,
+) {
+  const res = await authFetch(`${BASE}/settings/validate-provider`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider_type: providerType, provider, globals }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function cleanupEmbeddingStore(provider: Record<string, unknown>) {
+  const res = await authFetch(`${BASE}/settings/cleanup-embedding-store`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export interface FeishuRecipient {
+  open_id: string
+  name: string
+}
+
+export async function fetchFeishuRecipients(): Promise<FeishuRecipient[]> {
+  const res = await authFetch(`${BASE}/settings/feishu-recipients`)
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || `HTTP ${res.status}`)
+  }
+  const data = await res.json()
+  return Array.isArray(data.items) ? data.items : []
+}
+
+export interface LlmProviderOption {
+  id: string
+  name?: string
+  kind?: string
+  model?: string
+  deployment?: string
+}
+
+export async function fetchLlmCatalog(): Promise<{ providers: LlmProviderOption[]; active_id: string }> {
+  const res = await authFetch(`${BASE}/settings/llm-catalog`)
+  return res.json()
+}
+
 export async function changePassword(oldPassword: string, newPassword: string) {
   const res = await authFetch(`${BASE}/auth/change-password`, {
     method: 'POST',
@@ -258,6 +333,7 @@ export async function sendMessage(
   signal?: AbortSignal,
   images?: string[],
   folderId?: string | null,
+  llmProviderId?: string | null,
 ) {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -271,6 +347,7 @@ export async function sendMessage(
       folder_id: conversationId ? undefined : folderId ?? undefined,
       enable_search: enableSearch,
       images: images?.length ? images : undefined,
+      llm_provider_id: llmProviderId || undefined,
     }),
     signal,
   })

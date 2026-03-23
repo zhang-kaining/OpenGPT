@@ -24,8 +24,6 @@ async def _request_with_retry(
         await asyncio.sleep(wait)
     return resp
 
-settings = get_settings()
-
 # 飞书 docx block_type
 BLOCK_TYPE_TEXT = 2
 BLOCK_TYPE_HEADING1 = 3
@@ -86,12 +84,13 @@ def _classify_line(line: str) -> tuple[int, str]:
     # 5. 普通文本
     return BLOCK_TYPE_TEXT, stripped or " "
 
-_token_cache: dict = {"token": "", "expires_at": 0}
+# 不同飞书应用（app_id/app_secret）必须使用各自 token，避免切换配置后误复用旧 token。
+_token_cache: dict[str, dict[str, float | str]] = {}
 
 
 def _wiki_url(node_token: str) -> str:
     """生成可在浏览器打开的 Wiki 页链接（使用租户域名）。"""
-    base = (settings.feishu_wiki_base_url or "https://open.feishu.cn").rstrip("/")
+    base = (get_settings().feishu_wiki_base_url or "https://open.feishu.cn").rstrip("/")
     return f"{base}/wiki/{node_token}"
 
 
@@ -126,15 +125,20 @@ def _parse_md_table(lines: list[str]) -> tuple[int, int, list[list[str]]] | None
 async def get_tenant_access_token() -> str:
     """获取飞书 tenant_access_token，自动缓存"""
     import time
-    if _token_cache["token"] and time.time() < _token_cache["expires_at"] - 60:
-        return _token_cache["token"]
+    s = get_settings()
+    app_id = (s.feishu_app_id or "").strip()
+    app_secret = (s.feishu_app_secret or "").strip()
+    cache_key = f"{app_id}::{app_secret}"
+    cached = _token_cache.get(cache_key)
+    if cached and cached.get("token") and time.time() < float(cached.get("expires_at", 0)) - 60:
+        return str(cached["token"])
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
             json={
-                "app_id": settings.feishu_app_id,
-                "app_secret": settings.feishu_app_secret,
+                "app_id": app_id,
+                "app_secret": app_secret,
             },
             timeout=10,
         )
@@ -142,10 +146,11 @@ async def get_tenant_access_token() -> str:
         if data.get("code") != 0:
             raise RuntimeError(f"飞书获取 token 失败: {data}")
 
-        import time
-        _token_cache["token"] = data["tenant_access_token"]
-        _token_cache["expires_at"] = time.time() + data.get("expire", 7200)
-        return _token_cache["token"]
+        _token_cache[cache_key] = {
+            "token": data["tenant_access_token"],
+            "expires_at": time.time() + data.get("expire", 7200),
+        }
+        return str(_token_cache[cache_key]["token"])
 
 
 async def send_message(content: str, receive_id: str | None = None) -> dict:
@@ -154,7 +159,7 @@ async def send_message(content: str, receive_id: str | None = None) -> dict:
     receive_id: 接收者 open_id（ou_xxx）或 chat_id（oc_xxx）。
                 不传则使用 .env 里的 FEISHU_DEFAULT_OPEN_ID。
     """
-    target_id = receive_id or settings.feishu_default_open_id
+    target_id = receive_id or get_settings().feishu_default_open_id
     if not target_id:
         return {"success": False, "error": "未配置接收者 ID（FEISHU_DEFAULT_OPEN_ID）"}
 
@@ -369,7 +374,7 @@ async def write_to_wiki(content: str, title: str | None = None) -> dict:
     向配置的 Wiki 页面追加内容。使用 FEISHU_WIKI_NODE_TOKEN（知识库 URL 里 /wiki/ 后面的 token）。
     返回 {"success": True, "url": "https://open.feishu.cn/wiki/xxx"} 或 {"success": False, "error": "..."}
     """
-    node_token = (settings.feishu_wiki_node_token or "").strip()
+    node_token = (get_settings().feishu_wiki_node_token or "").strip()
     if not node_token:
         return {"success": False, "error": "未配置 FEISHU_WIKI_NODE_TOKEN（知识库页面 token）"}
 
@@ -452,7 +457,7 @@ async def create_document(title: str, content: str, as_sub_doc: bool = False) ->
     logger.info("=== create_document 入口 ===")
     logger.info("title=%r, as_sub_doc=%s, content长度=%d", title, as_sub_doc, len(content or ""))
     logger.info("content前500字:\n%s", (content or "")[:500])
-    wiki_token = (settings.feishu_wiki_node_token or "").strip()
+    wiki_token = (get_settings().feishu_wiki_node_token or "").strip()
     if wiki_token:
         if as_sub_doc:
             access_token = await get_tenant_access_token()
@@ -476,7 +481,7 @@ async def create_document(title: str, content: str, as_sub_doc: bool = False) ->
         return await write_to_wiki(content, title=title)
 
     token = await get_tenant_access_token()
-    folder_token = (settings.feishu_default_folder_token or "").strip() or None
+    folder_token = (get_settings().feishu_default_folder_token or "").strip() or None
 
     async with httpx.AsyncClient() as client:
         # 1. 创建文档
@@ -590,7 +595,7 @@ async def get_app_permissions_info() -> dict:
         out["contact_scopes"] = r2.json()
 
         # 3. Wiki 节点信息（你配置的 FEISHU_WIKI_NODE_TOKEN）
-        node_token = (settings.feishu_wiki_node_token or "").strip()
+        node_token = (get_settings().feishu_wiki_node_token or "").strip()
         if node_token:
             r3 = await client.get(
                 "https://open.feishu.cn/open-apis/wiki/v2/spaces/get_node",
@@ -619,3 +624,60 @@ async def get_app_permissions_info() -> dict:
                     out["docx_write"] = r4.json()
 
     return out
+
+
+async def list_visible_users(limit: int = 200) -> list[dict]:
+    """
+    拉取当前应用可见用户列表（用于选择默认接收人 OpenID）。
+    返回: [{"open_id": "...", "name": "..."}]
+    """
+    s = get_settings()
+    token = await get_tenant_access_token()
+    logger.info(
+        "feishu list_visible_users start app_id=%s default_open_id=%s limit=%d",
+        (s.feishu_app_id or "").strip(),
+        (s.feishu_default_open_id or "").strip(),
+        limit,
+    )
+    users: list[dict] = []
+    page_token = ""
+    page_size = 50
+
+    async with httpx.AsyncClient() as client:
+        while len(users) < limit:
+            params = {"user_id_type": "open_id", "page_size": page_size}
+            if page_token:
+                params["page_token"] = page_token
+            resp = await client.get(
+                "https://open.feishu.cn/open-apis/contact/v3/users",
+                params=params,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=12,
+            )
+            data = resp.json()
+            if data.get("code") != 0:
+                raise RuntimeError(data.get("msg", str(data)))
+
+            items = data.get("data", {}).get("items") or []
+            for it in items:
+                open_id = str(it.get("open_id") or "").strip()
+                if not open_id:
+                    continue
+                users.append({
+                    "open_id": open_id,
+                    "name": str(it.get("name") or it.get("en_name") or open_id),
+                })
+                if len(users) >= limit:
+                    break
+
+            has_more = bool(data.get("data", {}).get("has_more"))
+            page_token = str(data.get("data", {}).get("page_token") or "").strip()
+            if not has_more or not page_token:
+                break
+
+    preview = ", ".join(
+        f"{u.get('name','')}<{u.get('open_id','')}>"
+        for u in users[:3]
+    )
+    logger.info("feishu list_visible_users done count=%d preview=%s", len(users), preview or "(empty)")
+    return users

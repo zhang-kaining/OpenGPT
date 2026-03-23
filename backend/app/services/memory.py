@@ -1,21 +1,26 @@
 import hashlib
+import json
 import logging
 import os
 import re
 import sqlite3
 from datetime import datetime, timezone
-from dotenv import load_dotenv
-
-# mem0 读 MEM0_DIR；由 app.config 在 import 时解析（含不可写路径回退到 ~/.mem0）
-load_dotenv()
-import app.config as _app_config  # noqa: F401
 
 from mem0 import Memory
 from app.config import get_settings
+from app.services import azure_openai as oai_service
+from app.services import runtime_config as rc
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
-_mem0_dir = os.environ.get("MEM0_DIR", os.path.join(os.path.expanduser("~"), ".mem0"))
+
+
+def _resolved_mem0_dir() -> str:
+    get_settings()
+    return os.environ["MEM0_DIR"]
+
+
+def _memory_flag_truthy(raw: str) -> bool:
+    return (raw or "").strip().lower() in ("1", "true", "yes", "on")
 
 _memory: Memory | None = None
 _legacy_memory: Memory | None = None
@@ -26,9 +31,15 @@ _RECENT_MEMORY_SUPPLEMENT = 3
 _RECENT_MEMORY_POOL = 40
 
 
+def reset_memory_clients() -> None:
+    global _memory, _legacy_memory
+    _memory = None
+    _legacy_memory = None
+
+
 def _db_connect() -> sqlite3.Connection:
     """与 aiosqlite 共用 chat.db 时减少锁竞争。"""
-    conn = sqlite3.connect(settings.db_path, timeout=_SQLITE_BUSY_MS / 1000.0)
+    conn = sqlite3.connect(get_settings().db_path, timeout=_SQLITE_BUSY_MS / 1000.0)
     conn.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_MS}")
     return conn
 
@@ -38,110 +49,202 @@ def _stable_memory_row_id(user_id: str, memory_text: str) -> str:
     h = hashlib.sha256(f"{user_id}\n{memory_text}".encode("utf-8")).hexdigest()
     return f"um_{h}"
 
-# DashScope OpenAI 兼容接口当前只支持文本 embedding 模型。
-# 允许用户填写多模态模型名时自动降级到可用文本模型，避免启动/检索报错。
-_DASHSCOPE_MODEL_FALLBACKS = {
-    "qwen3-vl-embedding": "text-embedding-v4",
-    "tongyi-embedding-vision-plus": "text-embedding-v4",
-}
-
-# Embedding provider 默认配置
-_PROVIDER_DEFAULTS = {
-    "azure": {
-        "model": settings.azure_openai_embedding_deployment or "text-embedding-3-small",
-        "base_url": None,
-    },
-    "dashscope": {
-        "model": "text-embedding-v3",
-        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    },
-    "zhipu": {
-        "model": "embedding-3",
-        "base_url": "https://open.bigmodel.cn/api/paas/v4",
-    },
-    "ollama": {
-        "model": "nomic-embed-text",
-        "base_url": "http://localhost:11434/v1",
-    },
-}
+def _parse_embedding_providers(s) -> list[dict]:
+    try:
+        v = json.loads(s.embedding_providers_json or "[]")
+        return v if isinstance(v, list) else []
+    except json.JSONDecodeError:
+        return []
 
 
-def _build_collection_name(provider: str, model: str) -> str:
+def _legacy_embedding_to_provider(s) -> dict:
+    legacy_provider = (s.embedding_provider or "").strip().lower()
+    kind = "azure" if legacy_provider == "azure" else "openai"
+    out: dict[str, object] = {
+        "id": f"{kind}-default",
+        "name": "Embedding 默认提供方",
+        "kind": kind,
+    }
+    if kind == "azure":
+        out["deployment"] = (s.embedding_model or s.azure_openai_embedding_deployment or "text-embedding-3-small").strip()
+        if s.azure_openai_endpoint:
+            out["endpoint"] = s.azure_openai_endpoint
+        if s.azure_openai_api_version:
+            out["api_version"] = s.azure_openai_api_version
+        if s.embedding_api_key:
+            out["api_key"] = s.embedding_api_key
+        elif s.azure_openai_api_key:
+            out["api_key"] = s.azure_openai_api_key
+    else:
+        out["model"] = (s.embedding_model or "text-embedding-3-small").strip()
+        if s.embedding_base_url:
+            out["base_url"] = s.embedding_base_url
+        if s.embedding_api_key:
+            out["api_key"] = s.embedding_api_key
+    return out
+
+
+def _migrate_embedding_providers_if_needed(s) -> list[dict]:
+    provs = _parse_embedding_providers(s)
+    if provs:
+        return provs
+    has_legacy = bool(
+        (s.embedding_provider or "").strip()
+        or (s.embedding_base_url or "").strip()
+        or (s.embedding_api_key or "").strip()
+        or (s.embedding_model or "").strip()
+    )
+    if not has_legacy:
+        return []
+    item = _legacy_embedding_to_provider(s)
+    try:
+        rc.update_raw(
+            {
+                "embedding_providers_json": json.dumps([item], ensure_ascii=False),
+                "active_embedding_provider_id": str(item.get("id", "")),
+            }
+        )
+    except Exception as e:
+        logger.warning("embedding 单配置迁移失败: %s", e)
+    return [item]
+
+
+def _pick_embedding_provider(s) -> dict:
+    provs = _migrate_embedding_providers_if_needed(s)
+    pid = (s.active_embedding_provider_id or "").strip()
+    if pid:
+        for p in provs:
+            if isinstance(p, dict) and str(p.get("id", "")).strip() == pid:
+                return p
+    for p in provs:
+        if isinstance(p, dict):
+            kind = str(p.get("kind", "")).strip().lower()
+            if kind in ("openai", "azure"):
+                return p
+    # 兜底仍可用：无配置时回退到默认 azure
+    return {
+        "id": "azure-default",
+        "name": "Azure Embedding",
+        "kind": "azure",
+        "deployment": s.azure_openai_embedding_deployment or "text-embedding-3-small",
+        "endpoint": s.azure_openai_endpoint,
+        "api_version": s.azure_openai_api_version,
+    }
+
+
+def _normalized_dim_tag(provider_cfg: dict) -> str:
+    raw = provider_cfg.get("dimensions", provider_cfg.get("embedding_dims"))
+    try:
+        if raw not in (None, ""):
+            v = int(raw)
+            if v > 0:
+                return f"d{v}"
+    except (TypeError, ValueError):
+        pass
+    return "dauto"
+
+
+def _build_collection_name(provider: str, model: str, dim_tag: str) -> str:
     """
     按 provider + model 生成稳定 collection 名，避免不同向量维度写到同一集合。
     例如:
-      my_gpt_memories_dashscope_text_embedding_v4
-      my_gpt_memories_dashscope_multimodal_embedding_v1
+      OpenGPT_memories_dashscope_text_embedding_v4
+      OpenGPT_memories_dashscope_multimodal_embedding_v1
     """
     p = re.sub(r"[^a-zA-Z0-9]+", "_", (provider or "unknown")).strip("_").lower()
     m = re.sub(r"[^a-zA-Z0-9]+", "_", (model or "default")).strip("_").lower()
-    name = f"my_gpt_memories_{p}_{m}"
+    d = re.sub(r"[^a-zA-Z0-9]+", "_", (dim_tag or "dauto")).strip("_").lower()
+    name = f"OpenGPT_memories_{p}_{m}_{d}"
     return name[:120]
 
 
-def _build_store_path(provider: str, model: str) -> str:
+def _build_store_path(provider: str, model: str, dim_tag: str) -> str:
     """
     按 provider + model 隔离 qdrant 本地存储目录，避免 mem0 内部集合（如 mem0migrations）
     在不同向量维度之间冲突。
     """
     p = re.sub(r"[^a-zA-Z0-9]+", "_", (provider or "unknown")).strip("_").lower()
     m = re.sub(r"[^a-zA-Z0-9]+", "_", (model or "default")).strip("_").lower()
-    ns = f"{p}_{m}"[:80]
+    d = re.sub(r"[^a-zA-Z0-9]+", "_", (dim_tag or "dauto")).strip("_").lower()
+    ns = f"{p}_{m}_{d}"[:80]
     return f"data/qdrant_{ns}"
 
 
-def _build_config_with(provider: str, model: str, base_url: str | None, collection_name: str, store_path: str) -> dict:
-    # 仅在使用 DashScope 官方 OpenAI 兼容地址时做模型降级。
-    # 若 base_url 指向自建网关（如 http://127.0.0.1:8101/v1），则保留原模型名透传。
-    use_dashscope_compat = (not base_url) or ("dashscope.aliyuncs.com/compatible-mode" in base_url)
-    if provider == "dashscope" and use_dashscope_compat and model in _DASHSCOPE_MODEL_FALLBACKS:
-        fallback_model = _DASHSCOPE_MODEL_FALLBACKS[model]
-        logger.warning(
-            "embedding 模型 %s 不支持 DashScope OpenAI 兼容接口，自动降级为 %s",
-            model,
-            fallback_model,
-        )
-        model = fallback_model
+def _build_mem0_llm_config(s) -> dict:
+    """
+    mem0 的事实抽取 LLM 与对话模型保持一致，避免只配置了 provider
+    但未填全局 Azure 时初始化失败。
+    """
+    kind, model_name, extra = oai_service.resolve_llm(s)
+    if kind == "openai":
+        cfg: dict[str, object] = {
+            "model": model_name,
+            "temperature": 0.1,
+            "max_tokens": 2000,
+            "api_key": str(extra.get("api_key") or ""),
+        }
+        base = str(extra.get("base_url") or "").strip()
+        if base:
+            cfg["openai_base_url"] = base
+        return {"provider": "openai", "config": cfg}
+    return {
+        "provider": "azure_openai",
+        "config": {
+            "model": model_name,
+            "temperature": 0.1,
+            "max_tokens": 2000,
+            "azure_kwargs": {
+                "azure_deployment": model_name,
+                "api_version": str(extra.get("api_version") or s.azure_openai_api_version),
+                "azure_endpoint": str(extra.get("endpoint") or s.azure_openai_endpoint),
+                "api_key": str(extra.get("api_key") or s.azure_openai_api_key),
+            },
+        },
+    }
 
-    if provider == "azure":
+
+def _build_config_with(provider_kind: str, model: str, provider_cfg: dict, collection_name: str, store_path: str, s) -> dict:
+    dimensions_raw = provider_cfg.get("dimensions")
+    dimensions: int | None = None
+    try:
+        if dimensions_raw not in (None, ""):
+            dimensions = int(dimensions_raw)
+    except (TypeError, ValueError):
+        dimensions = None
+
+    if provider_kind == "azure":
+        endpoint = str(provider_cfg.get("endpoint") or s.azure_openai_endpoint).strip()
+        api_version = str(provider_cfg.get("api_version") or s.azure_openai_api_version).strip()
+        api_key = str(provider_cfg.get("api_key") or s.azure_openai_api_key).strip()
         embedder = {
             "provider": "azure_openai",
             "config": {
                 "model": model,
                 "azure_kwargs": {
                     "azure_deployment": model,
-                    "api_version": settings.azure_openai_api_version,
-                    "azure_endpoint": settings.azure_openai_endpoint,
-                    "api_key": settings.azure_openai_api_key,
+                    "api_version": api_version,
+                    "azure_endpoint": endpoint,
+                    "api_key": api_key,
                 },
             },
         }
     else:
-        # dashscope / zhipu / ollama 均兼容 OpenAI 接口
-        api_key = settings.embedding_api_key or "ollama"  # ollama 不需要真实 key
+        api_key = str(provider_cfg.get("api_key") or s.embedding_api_key).strip()
+        base_url = str(provider_cfg.get("base_url") or "").strip().rstrip("/")
         embedder_cfg: dict = {"model": model, "api_key": api_key}
         if base_url:
+            if not base_url.endswith("/v1"):
+                base_url = f"{base_url}/v1"
             embedder_cfg["openai_base_url"] = base_url
+        if dimensions and dimensions > 0:
+            embedder_cfg["embedding_dims"] = dimensions
         embedder = {"provider": "openai", "config": embedder_cfg}
 
     logger.info("mem0 collection: %s", collection_name)
     logger.info("mem0 qdrant path: %s", store_path)
 
     return {
-        "llm": {
-            "provider": "azure_openai",
-            "config": {
-                "model": settings.azure_openai_deployment,
-                "temperature": 0.1,
-                "max_tokens": 2000,
-                "azure_kwargs": {
-                    "azure_deployment": settings.azure_openai_deployment,
-                    "api_version": settings.azure_openai_api_version,
-                    "azure_endpoint": settings.azure_openai_endpoint,
-                    "api_key": settings.azure_openai_api_key,
-                },
-            },
-        },
+        "llm": _build_mem0_llm_config(s),
         "embedder": embedder,
         "vector_store": {
             "provider": "qdrant",
@@ -154,31 +257,44 @@ def _build_config_with(provider: str, model: str, base_url: str | None, collecti
 
 
 def _build_config() -> dict:
-    provider = settings.embedding_provider.lower()
-    defaults = _PROVIDER_DEFAULTS.get(provider, _PROVIDER_DEFAULTS["azure"])
-    model = settings.embedding_model or defaults["model"]
-    base_url = settings.embedding_base_url or defaults["base_url"]
-    collection_name = _build_collection_name(provider, model)
-    store_path = _build_store_path(provider, model)
-    return _build_config_with(provider, model, base_url, collection_name, store_path)
+    s = get_settings()
+    p = _pick_embedding_provider(s)
+    kind = str(p.get("kind", "")).strip().lower()
+    if kind not in ("openai", "azure"):
+        kind = "azure"
+    model = (
+        str(p.get("deployment") or "").strip()
+        if kind == "azure"
+        else str(p.get("model") or "").strip()
+    )
+    if not model:
+        model = s.azure_openai_embedding_deployment if kind == "azure" else "text-embedding-3-small"
+    provider_tag = str(p.get("id") or kind).strip() or kind
+    dim_tag = _normalized_dim_tag(p)
+    collection_name = _build_collection_name(provider_tag, model, dim_tag)
+    store_path = _build_store_path(provider_tag, model, dim_tag)
+    return _build_config_with(kind, model, p, collection_name, store_path, s)
 
 
 def _build_legacy_config() -> dict:
-    provider = settings.embedding_provider.lower()
-    base_url = settings.embedding_base_url or _PROVIDER_DEFAULTS.get(provider, _PROVIDER_DEFAULTS["azure"])["base_url"]
-    legacy_model = os.getenv("MEMORY_LEGACY_MODEL", "text-embedding-v4")
-    legacy_collection = os.getenv("MEMORY_LEGACY_COLLECTION", "my_gpt_memories")
-    legacy_path = os.getenv("MEMORY_LEGACY_PATH", "data/qdrant")
+    s = get_settings()
+    p = _pick_embedding_provider(s)
+    kind = str(p.get("kind", "")).strip().lower()
+    if kind not in ("openai", "azure"):
+        kind = "azure"
+    legacy_model = s.memory_legacy_model or "text-embedding-v4"
+    legacy_collection = s.memory_legacy_collection or "OpenGPT_memories"
+    legacy_path = s.memory_legacy_path or "data/qdrant"
     logger.info("mem0 legacy collection: %s", legacy_collection)
     logger.info("mem0 legacy qdrant path: %s", legacy_path)
-    return _build_config_with(provider, legacy_model, base_url, legacy_collection, legacy_path)
+    return _build_config_with(kind, legacy_model, p, legacy_collection, legacy_path, s)
 
 
 def get_memory() -> Memory:
     global _memory
     if _memory is None:
         config = _build_config()
-        logger.info("mem0 初始化，embedding provider: %s", settings.embedding_provider)
+        logger.info("mem0 初始化，active embedding provider: %s", get_settings().active_embedding_provider_id or "(auto)")
         _memory = Memory.from_config(config)
     return _memory
 
@@ -186,7 +302,7 @@ def get_memory() -> Memory:
 def get_legacy_memory() -> Memory | None:
     global _legacy_memory
     # 默认严格隔离：一个模型一套存储，不跨模型读取
-    enable_legacy = os.getenv("MEMORY_ENABLE_LEGACY_READ", "0").lower() in ("1", "true", "yes", "on")
+    enable_legacy = _memory_flag_truthy(get_settings().memory_enable_legacy_read)
     if not enable_legacy:
         return None
     if _legacy_memory is None:
@@ -316,7 +432,7 @@ def _import_from_mem0_history(user_id: str, limit: int = 200) -> int:
     当 user_memories 为空时，从 MEM0_DIR/history.db 回填最近的记忆文本。
     说明：mem0 history 表通常不含 user_id，这里仅在当前用户为空时作为兜底导入。
     """
-    hist_db = os.path.join(_mem0_dir, "history.db")
+    hist_db = os.path.join(_resolved_mem0_dir(), "history.db")
     if not os.path.exists(hist_db):
         return 0
     try:
@@ -415,7 +531,7 @@ def add_memories(messages: list[dict], user_id: str) -> None:
         logger.info("memory_add primary success user_id=%s", user_id)
     except Exception as e:
         logger.warning("add_memories 失败: %s", e)
-    dual_write = os.getenv("MEMORY_DUAL_WRITE_LEGACY", "0").lower() in ("1", "true", "yes", "on")
+    dual_write = _memory_flag_truthy(get_settings().memory_dual_write_legacy)
     if dual_write:
         legacy = get_legacy_memory()
         if legacy is not None:
