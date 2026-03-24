@@ -1,7 +1,7 @@
 <template>
-  <div class="chat-view">
+  <div class="chat-view" :class="{ desktop: isDesktop }">
     <!-- 顶部栏 -->
-    <div class="chat-header">
+    <div v-if="!isDesktop" class="chat-header">
       <button v-if="sidebarCollapsed" class="expand-sidebar-btn" title="展开侧边栏" @click="sidebarCollapsed = false">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="3" y="3" width="18" height="18" rx="2"/>
@@ -24,15 +24,32 @@
         未配置模型提供方 · 请打开「设置 → 环境与模型」添加
       </div>
     </div>
+    <div v-if="isDesktop" class="desktop-floating-model">
+      <div v-if="store.llmProviders.length" class="model-selector-wrap">
+        <select
+          v-model="store.selectedLlmProviderId"
+          class="model-select"
+          title="本条对话使用的模型提供方"
+          @change="store.persistLlmProviderSelection()"
+        >
+          <option v-for="p in store.llmProviders" :key="p.id" :value="p.id">
+            {{ providerLabel(p) }}
+          </option>
+        </select>
+      </div>
+      <div v-else class="model-selector-hint" title="未配置多模型">
+        未配置模型提供方 · 请打开「设置 → 环境与模型」添加
+      </div>
+    </div>
 
     <!-- 消息区域 -->
     <div ref="scrollEl" class="messages-container">
       <!-- 欢迎页 -->
       <div v-if="store.messages.length === 0" class="welcome">
-        <div class="welcome-logo">
+        <div v-if="!isDesktop" class="welcome-logo">
           <img src="/hamster.svg" alt="logo" width="48" height="48" />
         </div>
-        <h2>有什么可以帮忙的？</h2>
+        <h2>{{ isDesktop ? '有什么我能帮你的吗？' : '有什么可以帮忙的？' }}</h2>
 
         <!-- 动态资讯 -->
         <div v-if="newsItems.length" class="news-section">
@@ -91,11 +108,11 @@ import InputBar from './InputBar.vue'
 
 const store = useChatStore()
 const sidebarCollapsed = inject<Ref<boolean>>('sidebarCollapsed', ref(false))
+const isDesktop = inject<Ref<boolean>>('isDesktop', ref(false))
 const scrollEl = ref<HTMLElement | null>(null)
 
 function providerLabel(p: LlmProviderOption) {
-  const tail = p.kind === 'openai' ? (p.model || 'OpenAI 兼容') : (p.deployment || 'Azure')
-  return `${p.name || p.id} · ${tail}`
+  return p.name || p.id
 }
 
 
@@ -176,6 +193,10 @@ watch(
   overflow: hidden;
   background: var(--bg-main);
   min-width: 0;
+  position: relative;
+}
+.chat-view.desktop {
+  padding-top: 8px;
 }
 
 .chat-header {
@@ -184,6 +205,14 @@ watch(
   align-items: center;
   padding: 0 16px;
   flex-shrink: 0;
+  -webkit-app-region: drag;
+}
+
+.desktop-floating-model {
+  position: absolute;
+  top: 34px;
+  left: 16px;
+  z-index: 12;
 }
 
 .expand-sidebar-btn {
@@ -199,6 +228,7 @@ watch(
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
   flex-shrink: 0;
+  -webkit-app-region: no-drag;
 }
 .expand-sidebar-btn:hover {
   background: var(--bg-hover);
@@ -218,6 +248,7 @@ watch(
   background: var(--bg-sidebar);
   max-width: min(280px, 42vw);
   cursor: pointer;
+  -webkit-app-region: no-drag;
 }
 .model-selector-hint {
   margin-left: auto;

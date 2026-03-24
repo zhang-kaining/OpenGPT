@@ -1,6 +1,7 @@
 <template>
   <LoginPage v-if="!isLoggedIn" @success="onLoginSuccess" />
-  <div v-else id="app-layout">
+  <div v-else id="app-layout" :class="{ 'desktop-shell': isDesktop }">
+    <div v-if="isDesktop" class="desktop-drag-strip"></div>
     <Sidebar />
     <ChatView v-show="currentView === 'chat'" />
     <NoteView v-if="currentView === 'notes'" />
@@ -24,6 +25,8 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import PromptDialog from '@/components/PromptDialog.vue'
 
 const store = useChatStore()
+const isDesktop = typeof navigator !== 'undefined' && navigator.userAgent.includes('Electron')
+provide('isDesktop', ref(isDesktop))
 
 const sidebarCollapsed = ref(false)
 provide('sidebarCollapsed', sidebarCollapsed)
@@ -37,6 +40,10 @@ function onLoginSuccess() {
 
 onMounted(() => {
   initTheme()
+  if (isDesktop) {
+    // 桌面壳统一使用深色，更贴近原生应用观感
+    document.documentElement.classList.remove('light')
+  }
   if (isLoggedIn.value) {
     store.refreshSidebar()
   }
@@ -51,5 +58,19 @@ onMounted(() => {
   height: 100vh;
   overflow: hidden;
   background: var(--bg-main);
+}
+
+#app-layout.desktop-shell {
+  position: relative;
+}
+
+.desktop-drag-strip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  z-index: 10;
+  -webkit-app-region: drag;
 }
 </style>

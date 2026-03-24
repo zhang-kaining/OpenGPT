@@ -99,7 +99,7 @@
                   <button type="button" class="btn-secondary mini" :disabled="!!llmSavingByIndex[idx]" @click="saveOneLlmProvider(idx)">
                     {{ llmSavingByIndex[idx] ? '校验中...' : '校验并保存' }}
                   </button>
-                  <button type="button" class="btn-text danger" :disabled="llmRows.length <= 1 || !!llmSavingByIndex[idx]" @click="removeLlmRow(idx)">删除</button>
+                  <button type="button" class="btn-text danger" :disabled="!!llmSavingByIndex[idx]" @click="removeLlmRow(idx)">删除</button>
                 </div>
               </div>
               <div class="llm-fields">
@@ -193,7 +193,7 @@
                   <button type="button" class="btn-secondary mini" :disabled="!!embeddingSavingByIndex[idx]" @click="saveOneEmbeddingProvider(idx)">
                     {{ embeddingSavingByIndex[idx] ? '校验中...' : '校验并保存' }}
                   </button>
-                  <button type="button" class="btn-text danger" :disabled="embeddingRows.length <= 1 || !!embeddingSavingByIndex[idx]" @click="removeEmbeddingRow(idx)">删除</button>
+                  <button type="button" class="btn-text danger" :disabled="!!embeddingSavingByIndex[idx]" @click="removeEmbeddingRow(idx)">删除</button>
                 </div>
               </div>
               <div class="llm-fields">
@@ -953,9 +953,26 @@ function addLlmRow() {
   llmRows.value.push(emptyLlmRow())
 }
 
-function removeLlmRow(i: number) {
-  if (llmRows.value.length <= 1) return
+async function removeLlmRow(i: number) {
+  const removed = llmRows.value[i]
+  if (!removed) return
   llmRows.value.splice(i, 1)
+  syncLlmRowsToFormJson()
+  const remainingIds = llmRows.value.map((r) => r.name.trim()).filter(Boolean)
+  const activeNow = (runtimeForm.value.active_llm_provider_id || '').trim()
+  const nextActive = activeNow && !remainingIds.includes(activeNow) ? (remainingIds[0] || null) : (activeNow || null)
+  try {
+    await api.putRuntimeSettings({
+      llm_providers_json: runtimeForm.value.llm_providers_json || '[]',
+      active_llm_provider_id: nextActive,
+    })
+    runtimeSaveMsg.value = `已删除模型：${removed.name || removed.id || '未命名'}`
+    window.dispatchEvent(new Event('mygpt-llm-providers-updated'))
+    await loadRuntimeSettings()
+  } catch (e: unknown) {
+    runtimeSaveMsg.value = e instanceof Error ? e.message : '删除失败'
+    await loadRuntimeSettings()
+  }
 }
 
 function parseEmbeddingsFromForm() {
@@ -1147,9 +1164,25 @@ function addEmbeddingRow() {
   embeddingRows.value.push(emptyEmbeddingRow())
 }
 
-function removeEmbeddingRow(i: number) {
-  if (embeddingRows.value.length <= 1) return
+async function removeEmbeddingRow(i: number) {
+  const removed = embeddingRows.value[i]
+  if (!removed) return
   embeddingRows.value.splice(i, 1)
+  syncEmbeddingRowsToFormJson()
+  const remainingIds = embeddingRows.value.map((r) => r.name.trim()).filter(Boolean)
+  const activeNow = (runtimeForm.value.active_embedding_provider_id || '').trim()
+  const nextActive = activeNow && !remainingIds.includes(activeNow) ? (remainingIds[0] || null) : (activeNow || null)
+  try {
+    await api.putRuntimeSettings({
+      embedding_providers_json: runtimeForm.value.embedding_providers_json || '[]',
+      active_embedding_provider_id: nextActive,
+    })
+    runtimeSaveMsg.value = `已删除向量模型：${removed.name || removed.id || '未命名'}`
+    await loadRuntimeSettings()
+  } catch (e: unknown) {
+    runtimeSaveMsg.value = e instanceof Error ? e.message : '删除失败'
+    await loadRuntimeSettings()
+  }
 }
 
 async function loadRuntimeSettings() {

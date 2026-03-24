@@ -1,5 +1,5 @@
 <template>
-  <aside class="sidebar" :class="{ collapsed: isCollapsed }">
+  <aside class="sidebar" :class="{ collapsed: isCollapsed, desktop: isDesktop }">
     <!-- 顶部操作栏 -->
     <div class="sidebar-top">
       <button class="icon-btn" title="收起侧边栏" @click="isCollapsed = !isCollapsed">
@@ -8,12 +8,13 @@
           <path d="M9 3v18"/>
         </svg>
       </button>
-      <button class="icon-btn" title="搜索对话" @click="showSearch = !showSearch">
+      <button v-if="!isDesktop" class="icon-btn" title="搜索对话" @click="showSearch = !showSearch">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
         </svg>
       </button>
       <button
+        v-if="!isDesktop"
         class="icon-btn"
         title="新建文件夹"
         @click="newRootFolder"
@@ -194,6 +195,7 @@ const showSettings = ref(false)
 const store = useChatStore()
 const isCollapsed = inject<Ref<boolean>>('sidebarCollapsed', ref(false))
 const currentView = inject<Ref<string>>('currentView', ref('chat'))
+const isDesktop = inject<Ref<boolean>>('isDesktop', ref(false))
 
 const rootConversations = computed(() =>
   store.filteredConversations.filter(c => c.folder_id == null || c.folder_id === ''),
@@ -285,6 +287,10 @@ function openMemory() {
   align-items: center;
   padding: 10px 8px;
   gap: 2px;
+  -webkit-app-region: drag;
+}
+.sidebar.desktop .sidebar-top {
+  padding-top: 34px;
 }
 
 .icon-btn {
@@ -300,6 +306,7 @@ function openMemory() {
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
   flex-shrink: 0;
+  -webkit-app-region: no-drag;
 }
 .icon-btn:hover {
   background: var(--bg-hover);

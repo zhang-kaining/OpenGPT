@@ -124,6 +124,9 @@ function createShellWindow() {
     height: 840,
     show: true,
     icon: appIconPath(),
+    // macOS：沉浸式标题栏，界面自行绘制顶部区域
+    titleBarStyle: 'hidden',
+    trafficLightPosition: { x: 14, y: 12 },
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,

@@ -83,17 +83,31 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = await api.getMessages(id)
   }
 
-  async function newConversation() {
-    pendingFolderId.value = null
-    currentConvId.value = null
+  async function createConversationImmediately(folderId: string | null) {
+    const conv = await api.createConversation('未命名', folderId)
+    conversations.value.unshift(conv)
+    currentConvId.value = conv.id
     messages.value = []
+    pendingFolderId.value = null
   }
 
-  function newConversationInFolder(folderId: string) {
+  async function newConversation() {
+    pendingFolderId.value = null
+    try {
+      await createConversationImmediately(null)
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : '新建对话失败')
+    }
+  }
+
+  async function newConversationInFolder(folderId: string) {
     pendingFolderId.value = folderId
-    currentConvId.value = null
-    messages.value = []
     if (!expandedFolderIds.value.has(folderId)) toggleFolderExpanded(folderId)
+    try {
+      await createConversationImmediately(folderId)
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : '新建对话失败')
+    }
   }
 
   async function deleteConversation(id: string) {
