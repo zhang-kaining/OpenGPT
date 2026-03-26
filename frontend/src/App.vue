@@ -40,10 +40,6 @@ function onLoginSuccess() {
 
 onMounted(() => {
   initTheme()
-  if (isDesktop) {
-    // 桌面壳统一使用深色，更贴近原生应用观感
-    document.documentElement.classList.remove('light')
-  }
   if (isLoggedIn.value) {
     store.refreshSidebar()
   }

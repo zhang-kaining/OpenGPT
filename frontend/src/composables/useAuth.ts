@@ -4,6 +4,7 @@ export interface AuthUser {
   id: string
   username: string
   display_name: string
+  avatar?: string
 }
 
 const TOKEN_KEY = 'auth-token'
@@ -26,6 +27,12 @@ export function setAuth(t: string, u: AuthUser) {
   user.value = u
   localStorage.setItem(TOKEN_KEY, t)
   localStorage.setItem(USER_KEY, JSON.stringify(u))
+}
+
+export function setCurrentUserAvatar(avatar: string) {
+  if (!user.value) return
+  user.value = { ...user.value, avatar }
+  localStorage.setItem(USER_KEY, JSON.stringify(user.value))
 }
 
 export function clearAuth() {

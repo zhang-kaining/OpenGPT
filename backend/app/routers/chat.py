@@ -70,48 +70,49 @@ async def chat(request: Request, body: MessageCreate, user: dict = Depends(get_c
         citations = []
         disconnected = False
 
-        yield sse(json.dumps({"type": "conv_id", "conv_id": conv_id}, ensure_ascii=False))
+        try:
+            yield sse(json.dumps({"type": "conv_id", "conv_id": conv_id}, ensure_ascii=False))
 
-        async for event in oai_service.stream_chat(
-            messages, memories, body.enable_search, body.llm_provider_id
-        ):
-            if await request.is_disconnected():
-                disconnected = True
-                break
-
-            if event["type"] == "token":
-                for char in event["content"]:
-                    full_response += char
-                    yield sse(json.dumps({"type": "token", "content": char}, ensure_ascii=False))
-                    await asyncio.sleep(0.015)
-                    if await request.is_disconnected():
-                        disconnected = True
-                        break
-                if disconnected:
+            async for event in oai_service.stream_chat(
+                messages, memories, body.enable_search, body.llm_provider_id
+            ):
+                if await request.is_disconnected():
+                    disconnected = True
                     break
-            elif event["type"] in ("searching", "search_results"):
-                yield sse(json.dumps(event, ensure_ascii=False))
-            elif event["type"] == "done":
-                citations = event.get("citations", [])
-                yield sse(json.dumps(event, ensure_ascii=False))
-            elif event["type"] == "error":
-                yield sse(json.dumps(event, ensure_ascii=False))
 
-        if full_response:
-            await conv_service.add_message(conv_id, "assistant", full_response, citations or None)
-            all_msgs = await conv_service.get_messages(conv_id)
-            if len(all_msgs) == 2:
-                title = body.content[:30].replace("\n", " ")
-                await conv_service.update_conversation_title(conv_id, title)
+                if event["type"] == "token":
+                    for char in event["content"]:
+                        full_response += char
+                        yield sse(json.dumps({"type": "token", "content": char}, ensure_ascii=False))
+                        await asyncio.sleep(0.015)
+                        if await request.is_disconnected():
+                            disconnected = True
+                            break
+                    if disconnected:
+                        break
+                elif event["type"] in ("searching", "search_results"):
+                    yield sse(json.dumps(event, ensure_ascii=False))
+                elif event["type"] == "done":
+                    citations = event.get("citations", [])
+                    yield sse(json.dumps(event, ensure_ascii=False))
+                elif event["type"] == "error":
+                    yield sse(json.dumps(event, ensure_ascii=False))
+        finally:
+            if full_response:
+                await conv_service.add_message(conv_id, "assistant", full_response, citations or None)
+                all_msgs = await conv_service.get_messages(conv_id)
+                if len(all_msgs) == 2:
+                    title = body.content[:30].replace("\n", " ")
+                    await conv_service.update_conversation_title(conv_id, title)
+                if not disconnected:
+                    mem_service.add_memories(
+                        [{"role": "user", "content": body.content},
+                         {"role": "assistant", "content": full_response}],
+                        user_id
+                    )
+
             if not disconnected:
-                mem_service.add_memories(
-                    [{"role": "user", "content": body.content},
-                     {"role": "assistant", "content": full_response}],
-                    user_id
-                )
-
-        if not disconnected:
-            yield sse("[DONE]")
+                yield sse("[DONE]")
 
     return StreamingResponse(
         event_generator(),

@@ -10,7 +10,7 @@ from typing import Any
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 _DATA_DIR = _BACKEND_ROOT / "data"
-_SETTINGS_DB = _DATA_DIR / "settings.db"
+_SETTINGS_DB = Path(os.environ["SETTINGS_DB_PATH"]) if os.environ.get("SETTINGS_DB_PATH") else _DATA_DIR / "settings.db"
 
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
@@ -72,7 +72,7 @@ def _row_to_dict(conn: sqlite3.Connection) -> dict[str, Any]:
 
 
 def load_raw() -> dict[str, Any]:
-    _DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _SETTINGS_DB.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(_SETTINGS_DB))
     try:
         _ensure_schema(conn)
@@ -83,7 +83,7 @@ def load_raw() -> dict[str, Any]:
 
 
 def save_raw(data: dict[str, Any]) -> None:
-    _DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _SETTINGS_DB.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(_SETTINGS_DB))
     try:
         _ensure_schema(conn)
@@ -99,7 +99,7 @@ def save_raw(data: dict[str, Any]) -> None:
 
 
 def update_raw(partial: dict[str, Any]) -> dict[str, Any]:
-    _DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _SETTINGS_DB.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(_SETTINGS_DB))
     try:
         _ensure_schema(conn)

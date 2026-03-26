@@ -35,7 +35,7 @@
                 :key="opt.value"
                 class="theme-option"
                 :class="{ active: themeMode === opt.value }"
-                @click="themeMode = opt.value"
+                @click="setThemeMode(opt.value)"
               >
                 <svg v-if="opt.value === 'light'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
@@ -48,6 +48,24 @@
                 </svg>
                 <span>{{ opt.label }}</span>
               </button>
+            </div>
+          </div>
+          <div class="setting-group">
+            <div class="setting-label">用户头像</div>
+            <div class="avatar-options">
+              <button
+                v-for="(src, idx) in avatarPresets"
+                :key="idx"
+                class="avatar-option"
+                :class="{ active: userAvatar === src }"
+                @click="setUserAvatar(src)"
+              >
+                <img :src="src" alt="preset-avatar" />
+              </button>
+              <label class="avatar-upload">
+                上传
+                <input type="file" accept="image/*" @change="onAvatarUpload" />
+              </label>
             </div>
           </div>
 
@@ -104,7 +122,7 @@
               </div>
               <div class="llm-fields">
                 <label class="llm-field"><span>类型</span>
-                  <select v-model="row.kind" class="pw-input">
+                  <select v-model="row.kind" class="pw-input" @change="onLlmKindChange(idx)">
                     <option value="openai">OpenAI 兼容</option>
                     <option value="azure">Azure OpenAI</option>
                   </select>
@@ -198,7 +216,7 @@
               </div>
               <div class="llm-fields">
                 <label class="llm-field"><span>类型</span>
-                  <select v-model="row.kind" class="pw-input">
+                  <select v-model="row.kind" class="pw-input" @change="onEmbeddingKindChange(idx)">
                     <option value="openai">OpenAI 兼容</option>
                     <option value="azure">Azure OpenAI</option>
                   </select>
@@ -227,10 +245,16 @@
             <button type="button" class="btn-secondary llm-add-btn" @click="addEmbeddingRow">添加向量提供方</button>
             <label class="llm-active-row">
               <span class="env-label">默认向量提供方（mem0 使用）</span>
-              <select v-model="runtimeForm.active_embedding_provider_id" class="pw-input env-input">
+              <select
+                v-model="runtimeForm.active_embedding_provider_id"
+                class="pw-input env-input"
+                :disabled="savingActiveEmbeddingId"
+                @change="saveActiveEmbeddingProviderId"
+              >
                 <option value="">自动（列表第一项）</option>
                 <option v-for="id in activeEmbeddingIdOptions" :key="id" :value="id">{{ id }}</option>
               </select>
+              <span v-if="savingActiveEmbeddingId" class="mini-hint">默认向量提供方保存中...</span>
             </label>
           </div>
 
@@ -419,8 +443,9 @@
 
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
-import { themeMode } from '@/composables/useTheme'
+import { themeMode, setThemeMode } from '@/composables/useTheme'
 import type { ThemeMode } from '@/composables/useTheme'
+import { avatarPresets, userAvatar, setUserAvatar, uploadUserAvatar } from '@/composables/useAvatar'
 import { openConfirm } from '@/composables/useConfirmDialog'
 import * as api from '@/services/api'
 
@@ -556,6 +581,19 @@ const confirmPw = ref('')
 const pwError = ref('')
 const pwSuccess = ref(false)
 const pwLoading = ref(false)
+
+async function onAvatarUpload(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  try {
+    await uploadUserAvatar(file)
+  } catch (err: unknown) {
+    pwError.value = err instanceof Error ? err.message : '头像上传失败'
+  } finally {
+    input.value = ''
+  }
+}
 
 async function handleChangePw() {
   pwError.value = ''
@@ -886,6 +924,7 @@ const activeEmbeddingIdOptions = computed(() =>
 const savingRuntime = ref(false)
 const runtimeSaveMsg = ref('')
 const savingActiveLlmId = ref(false)
+const savingActiveEmbeddingId = ref(false)
 const llmSavingByIndex = ref<Record<number, boolean>>({})
 const llmRowMsgByIndex = ref<Record<number, string>>({})
 const llmRowOkByIndex = ref<Record<number, boolean>>({})
@@ -1100,6 +1139,13 @@ async function saveOneLlmProvider(idx: number) {
   }
 }
 
+async function onLlmKindChange(idx: number) {
+  const row = llmRows.value[idx]
+  // 新增行尚未命名时，不自动触发保存，避免打断填写流程
+  if (!row || !row.name.trim()) return
+  await saveOneLlmProvider(idx)
+}
+
 async function saveOneEmbeddingProvider(idx: number) {
   const row = embeddingRows.value[idx]
   if (!row || !row.name.trim()) {
@@ -1158,6 +1204,13 @@ async function saveOneEmbeddingProvider(idx: number) {
   } finally {
     embeddingSavingByIndex.value[idx] = false
   }
+}
+
+async function onEmbeddingKindChange(idx: number) {
+  const row = embeddingRows.value[idx]
+  // 新增行尚未命名时，不自动触发保存，避免打断填写流程
+  if (!row || !row.name.trim()) return
+  await saveOneEmbeddingProvider(idx)
 }
 
 function addEmbeddingRow() {
@@ -1230,6 +1283,22 @@ async function saveActiveLlmProviderId() {
     runtimeSaveMsg.value = e instanceof Error ? e.message : '保存失败'
   } finally {
     savingActiveLlmId.value = false
+  }
+}
+
+async function saveActiveEmbeddingProviderId() {
+  savingActiveEmbeddingId.value = true
+  runtimeSaveMsg.value = ''
+  try {
+    await api.putRuntimeSettings({
+      active_embedding_provider_id: (runtimeForm.value.active_embedding_provider_id || '').trim() || null,
+    })
+    runtimeSaveMsg.value = '默认向量提供方已保存'
+    await reloadAllSettingsData()
+  } catch (e: unknown) {
+    runtimeSaveMsg.value = e instanceof Error ? e.message : '保存失败'
+  } finally {
+    savingActiveEmbeddingId.value = false
   }
 }
 
@@ -1840,6 +1909,46 @@ watch(activeTab, async (tab) => {
   border-color: var(--accent);
   background: var(--accent-light);
   color: var(--text-primary);
+}
+
+.avatar-options {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.avatar-option {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--surface-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.avatar-option img {
+  width: 90%;
+  height: 90%;
+  object-fit: cover;
+  display: block;
+}
+.avatar-option.active {
+  border-color: var(--accent);
+}
+.avatar-upload {
+  font-size: 12px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.avatar-upload input {
+  display: none;
 }
 
 /* Password form */

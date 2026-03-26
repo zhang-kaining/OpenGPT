@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 from pathlib import Path
@@ -249,10 +250,9 @@ async def cleanup_embedding_store(body: CleanupEmbeddingStoreBody, _user: dict =
     model = _embedding_model_from_provider(p, s)
     dim_tag = _embedding_dim_tag_from_provider(p)
     ns = f"{_sanitize_token(provider_id)}_{_sanitize_token(model)}_{_sanitize_token(dim_tag)}"[:80]
-    rel_path = f"data/qdrant_{ns}"
-    backend_root = Path(__file__).resolve().parents[2]
-    target = (backend_root / rel_path).resolve()
-    data_root = (backend_root / "data").resolve()
+    db_dir = Path(os.environ.get("DB_PATH", "").strip() or "data/chat.db").parent
+    target = (db_dir / f"qdrant_{ns}").resolve()
+    data_root = db_dir.resolve()
     if data_root not in target.parents:
         raise HTTPException(status_code=400, detail="非法目录")
     if not target.name.startswith("qdrant_"):

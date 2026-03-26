@@ -1,13 +1,16 @@
 <template>
   <div class="chat-view" :class="{ desktop: isDesktop }">
     <!-- 顶部栏 -->
-    <div v-if="!isDesktop" class="chat-header">
+    <div class="chat-header" :class="{ desktop: isDesktop }">
       <button v-if="sidebarCollapsed" class="expand-sidebar-btn" title="展开侧边栏" @click="sidebarCollapsed = false">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="3" y="3" width="18" height="18" rx="2"/>
           <path d="M9 3v18"/>
         </svg>
       </button>
+      <div class="chat-title" :title="store.currentConversation?.title || '新对话'">
+        {{ store.currentConversation?.title || '新对话' }}
+      </div>
       <div v-if="store.llmProviders.length" class="model-selector-wrap">
         <select
           v-model="store.selectedLlmProviderId"
@@ -24,26 +27,8 @@
         未配置模型提供方 · 请打开「设置 → 环境与模型」添加
       </div>
     </div>
-    <div v-if="isDesktop" class="desktop-floating-model">
-      <div v-if="store.llmProviders.length" class="model-selector-wrap">
-        <select
-          v-model="store.selectedLlmProviderId"
-          class="model-select"
-          title="本条对话使用的模型提供方"
-          @change="store.persistLlmProviderSelection()"
-        >
-          <option v-for="p in store.llmProviders" :key="p.id" :value="p.id">
-            {{ providerLabel(p) }}
-          </option>
-        </select>
-      </div>
-      <div v-else class="model-selector-hint" title="未配置多模型">
-        未配置模型提供方 · 请打开「设置 → 环境与模型」添加
-      </div>
-    </div>
-
     <!-- 消息区域 -->
-    <div ref="scrollEl" class="messages-container">
+    <div ref="scrollEl" class="messages-container" @scroll="onScroll">
       <!-- 欢迎页 -->
       <div v-if="store.messages.length === 0" class="welcome">
         <div v-if="!isDesktop" class="welcome-logo">
@@ -110,6 +95,7 @@ const store = useChatStore()
 const sidebarCollapsed = inject<Ref<boolean>>('sidebarCollapsed', ref(false))
 const isDesktop = inject<Ref<boolean>>('isDesktop', ref(false))
 const scrollEl = ref<HTMLElement | null>(null)
+const autoStickToBottom = ref(true)
 
 function providerLabel(p: LlmProviderOption) {
   return p.name || p.id
@@ -171,6 +157,7 @@ function useSuggestion(text: string) {
 }
 
 function scrollToBottom() {
+  if (!autoStickToBottom.value) return
   nextTick(() => {
     if (scrollEl.value) {
       scrollEl.value.scrollTop = scrollEl.value.scrollHeight
@@ -178,10 +165,24 @@ function scrollToBottom() {
   })
 }
 
+function onScroll() {
+  const el = scrollEl.value
+  if (!el) return
+  const gap = el.scrollHeight - el.scrollTop - el.clientHeight
+  autoStickToBottom.value = gap < 40
+}
+
 watch(() => store.messages.length, scrollToBottom)
 watch(
   () => store.messages[store.messages.length - 1]?.content,
   scrollToBottom
+)
+watch(
+  () => store.currentConvId,
+  () => {
+    autoStickToBottom.value = true
+    scrollToBottom()
+  }
 )
 </script>
 
@@ -200,19 +201,22 @@ watch(
 }
 
 .chat-header {
-  height: 48px;
+  height: 52px;
   display: flex;
   align-items: center;
+  gap: 10px;
   padding: 0 16px;
   flex-shrink: 0;
-  -webkit-app-region: drag;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--bg-main);
+  border-bottom: 1px solid var(--border-light);
 }
-
-.desktop-floating-model {
-  position: absolute;
-  top: 34px;
-  left: 16px;
-  z-index: 12;
+.chat-header.desktop {
+  padding-top: 28px;
+  height: 62px;
+  -webkit-app-region: drag;
 }
 
 .expand-sidebar-btn {
@@ -237,6 +241,7 @@ watch(
 
 .model-selector-wrap {
   margin-left: auto;
+  flex-shrink: 0;
 }
 .model-select {
   font-size: 13px;
@@ -259,10 +264,23 @@ watch(
   line-height: 1.35;
 }
 
+.chat-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  padding: 0 8px;
+}
+
 .messages-container {
   flex: 1;
   overflow-y: auto;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
   min-height: 0;
 }
 

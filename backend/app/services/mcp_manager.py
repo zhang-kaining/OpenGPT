@@ -27,12 +27,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-MCP_CONFIG_PATH = Path(__file__).parent.parent.parent / "mcp.json"
+MCP_CONFIG_PATH = Path(os.environ["MCP_CONFIG_PATH"]) if os.environ.get("MCP_CONFIG_PATH") else Path(__file__).parent.parent.parent / "mcp.json"
 
 # MCP 工具的调用函数类型：async (tool_name, args) -> str
 McpCallable = Any

@@ -2,9 +2,10 @@ import logging
 import os
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.services.conversation import init_db
 from app.services.auth import init_users_table
@@ -66,7 +67,17 @@ async def feishu_permissions():
         return {"error": str(e)}
 
 
-# 桌面 / 单端口部署：设置 OpenGPT_STATIC_DIR 为 frontend 构建目录（含 index.html）
 _static = os.environ.get("OpenGPT_STATIC_DIR", "").strip()
 if _static and os.path.isdir(_static):
+    class _HtmlNoCacheMiddleware(BaseHTTPMiddleware):
+        """对 HTML 响应禁止缓存，避免 Electron webview 缓存旧版前端。"""
+        async def dispatch(self, request: Request, call_next):
+            response: Response = await call_next(request)
+            ct = (response.headers.get("content-type") or "")
+            if "text/html" in ct:
+                response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+                response.headers["Pragma"] = "no-cache"
+            return response
+
+    app.add_middleware(_HtmlNoCacheMiddleware)
     app.mount("/", StaticFiles(directory=_static, html=True), name="spa")

@@ -57,21 +57,21 @@ class Settings(BaseModel):
     user_id: str = "default_user"
     max_registered_users: int = 1
 
-    db_path: str = "data/chat.db"
+    db_path: str = os.environ.get("DB_PATH", "").strip() or "data/chat.db"
     sqlite_timeout_seconds: float = 30.0
 
     # JWT 专用密钥；不填则回退到原逻辑（azure key / 占位符）
     jwt_secret: str = ""
 
     # mem0 历史等；留空则用 ~/.mem0
-    mem0_dir: str = ""
+    mem0_dir: str = os.environ.get("MEM0_DIR", "").strip()
 
     # 与 .env MEMORY_* 一致，用字符串 "0"/"1" 便于前端与 JSON
     memory_enable_legacy_read: str = "0"
     memory_dual_write_legacy: str = "0"
     memory_legacy_model: str = "text-embedding-v4"
     memory_legacy_collection: str = "OpenGPT_memories"
-    memory_legacy_path: str = "data/qdrant"
+    memory_legacy_path: str = os.environ.get("MEMORY_LEGACY_PATH", "").strip() or "data/qdrant"
 
 
 def _coerce_patch_value(key: str, v: object, template: dict) -> object:

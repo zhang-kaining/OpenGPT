@@ -162,12 +162,14 @@ def _build_store_path(provider: str, model: str, dim_tag: str) -> str:
     """
     按 provider + model 隔离 qdrant 本地存储目录，避免 mem0 内部集合（如 mem0migrations）
     在不同向量维度之间冲突。
+    基路径跟随 db_path 所在目录，确保桌面版数据落到 userData。
     """
     p = re.sub(r"[^a-zA-Z0-9]+", "_", (provider or "unknown")).strip("_").lower()
     m = re.sub(r"[^a-zA-Z0-9]+", "_", (model or "default")).strip("_").lower()
     d = re.sub(r"[^a-zA-Z0-9]+", "_", (dim_tag or "dauto")).strip("_").lower()
     ns = f"{p}_{m}_{d}"[:80]
-    return f"data/qdrant_{ns}"
+    db_dir = os.path.dirname(os.environ.get("DB_PATH", "").strip() or "data/chat.db")
+    return os.path.join(db_dir, f"qdrant_{ns}")
 
 
 def _build_mem0_llm_config(s) -> dict:

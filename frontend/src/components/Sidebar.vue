@@ -14,7 +14,6 @@
         </svg>
       </button>
       <button
-        v-if="!isDesktop"
         class="icon-btn"
         title="新建文件夹"
         @click="newRootFolder"
@@ -144,7 +143,7 @@
     <div class="sidebar-footer">
       <button class="footer-user-btn" @click="openMemory">
         <div class="user-avatar">
-          <img src="/hamster.svg" alt="avatar" width="20" height="20" />
+          <img :src="userAvatar" alt="avatar" class="avatar-img" />
         </div>
         <span class="user-name">{{ currentUser?.display_name || currentUser?.username || '用户' }}</span>
       </button>
@@ -185,6 +184,7 @@ import { ref, computed, nextTick, watch, inject } from 'vue'
 import type { Ref } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { currentUser, clearAuth } from '@/composables/useAuth'
+import { userAvatar } from '@/composables/useAvatar'
 import type { Conversation } from '@/types'
 import SettingsPanel from './SettingsPanel.vue'
 import SidebarFolderBranch from './SidebarFolderBranch.vue'
@@ -471,15 +471,22 @@ function openMemory() {
 }
 
 .user-avatar {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: #fef3dc;
+  flex-shrink: 0;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  overflow: hidden;
+}
+
+.avatar-img {
+  width: 90%;
+  height: 90%;
+  display: block;
+  object-fit: cover;
 }
 
 .user-name {

@@ -2,7 +2,7 @@
  * 开发机试用：拉起 embedding 网关 + 主 API（含静态前端），再用 Electron 打开本地页面。
  * 需在仓库根目录：frontend 已 build、backend 已有 .venv 与 .env。
  */
-const { app, BrowserWindow, dialog, nativeImage } = require('electron')
+const { app, BrowserWindow, dialog, nativeImage, ipcMain, nativeTheme, session } = require('electron')
 const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
@@ -22,6 +22,24 @@ const devRootDir = path.resolve(__dirname, '..')
 
 function runtimeRootDir() {
   return app.isPackaged ? process.resourcesPath : devRootDir
+}
+
+function themeFilePath() {
+  return path.join(app.getPath('userData'), 'theme-mode.txt')
+}
+
+function readSavedTheme() {
+  try {
+    const mode = fs.readFileSync(themeFilePath(), 'utf-8').trim()
+    if (mode === 'light' || mode === 'dark' || mode === 'system') return mode
+  } catch (_) {}
+  return 'dark'
+}
+
+function resolveThemeBg() {
+  const mode = readSavedTheme()
+  const isDark = mode === 'dark' || (mode === 'system' && nativeTheme.shouldUseDarkColors)
+  return isDark ? '#212121' : '#ffffff'
 }
 
 /** Dock / 窗口图标：开发用 build/app-icon-1024.png，安装包用 Resources/icon.icns */
@@ -101,37 +119,77 @@ async function findSystemPython() {
 }
 
 function buildLoadingHtml(opts = {}) {
-  const apiHint = process.env.OpenGPT_API_PORT || process.env.MYGPT_API_PORT || DEFAULT_API_PORT
+  const bg = resolveThemeBg()
+  const isDark = bg !== '#ffffff'
+  const fg = isDark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.7)'
+  const fgMuted = isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.35)'
+  const dotColor = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)'
+  const logoCircleBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'
+  const logoCircleBorder = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'
   const extra = opts.firstTimeDeps
-    ? '<p style="margin:12px 24px 0;max-width:440px;font-size:13px;line-height:1.45;opacity:0.88;text-align:center">' +
-      '首次启动正在创建 Python 运行环境并安装依赖（pip），可能需要数分钟，请保持网络畅通。</p>'
+    ? `<p class="hint extra">首次启动正在创建 Python 运行环境并安装依赖，可能需要数分钟，请保持网络畅通。</p>`
     : ''
-  return (
-    '<!DOCTYPE html><html><head><meta charset="utf-8"><title>OpenGPT</title></head>' +
-    '<body style="margin:0;font:15px system-ui,-apple-system,sans-serif;background:#1e1e1e;color:#e0e0e0;' +
-    'display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh">' +
-    '<p style="margin:0">正在检测或启动本机服务，请稍候…</p>' +
-    '<p style="margin:10px 28px 0;max-width:460px;font-size:12px;line-height:1.45;opacity:0.75;text-align:center">' +
-    `若停很久：可能正在确认 ${apiHint} 端口上的服务（最多约 2 分钟），或首次安装 Python 依赖。</p>` +
-    extra +
-    '</body></html>'
-  )
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>OpenGPT</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,sans-serif;
+background:${bg};color:${fg};display:flex;flex-direction:column;align-items:center;
+justify-content:center;min-height:100vh;overflow:hidden}
+.container{display:flex;flex-direction:column;align-items:center;gap:28px;
+animation:fadeIn 0.6s ease-out both}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.logo-ring{width:64px;height:64px;border-radius:50%;
+background:${logoCircleBg};border:1px solid ${logoCircleBorder};
+display:flex;align-items:center;justify-content:center;position:relative}
+.logo-ring svg{width:28px;height:28px;opacity:0.7}
+.spinner{position:absolute;inset:-3px;border-radius:50%;
+border:2px solid transparent;border-top-color:${dotColor};
+animation:spin 1.2s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.text-group{display:flex;flex-direction:column;align-items:center;gap:8px}
+.title{font-size:15px;font-weight:500;letter-spacing:0.3px}
+.dots{display:inline-flex;gap:3px;margin-left:2px;vertical-align:middle}
+.dots span{width:3px;height:3px;border-radius:50%;background:${dotColor};
+animation:blink 1.4s ease-in-out infinite}
+.dots span:nth-child(2){animation-delay:0.2s}
+.dots span:nth-child(3){animation-delay:0.4s}
+@keyframes blink{0%,80%,100%{opacity:0.2}40%{opacity:1}}
+.hint{font-size:12px;line-height:1.5;color:${fgMuted};text-align:center;max-width:400px}
+.hint.extra{margin-top:4px;color:${fg};opacity:0.75}
+</style></head><body>
+<div class="container">
+  <div class="logo-ring">
+    <div class="spinner"></div>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+    </svg>
+  </div>
+  <div class="text-group">
+    <div class="title">正在启动服务<span class="dots"><span></span><span></span><span></span></span></div>
+    <p class="hint">首次启动可能需要稍等片刻</p>
+    ${extra}
+  </div>
+</div>
+</body></html>`
 }
 
 function createShellWindow() {
-  return new BrowserWindow({
+  const win = new BrowserWindow({
     width: 1280,
     height: 840,
-    show: true,
+    show: false,
+    backgroundColor: resolveThemeBg(),
     icon: appIconPath(),
-    // macOS：沉浸式标题栏，界面自行绘制顶部区域
     titleBarStyle: 'hidden',
     trafficLightPosition: { x: 14, y: 12 },
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      preload: path.join(__dirname, 'preload.cjs'),
     },
   })
+  win.once('ready-to-show', () => win.show())
+  return win
 }
 
 async function createLoadingWindow(firstTimeDeps) {
@@ -384,17 +442,23 @@ async function bootstrap() {
     await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(buildLoadingHtml({ firstTimeDeps: false })))
   }
 
-  const existing = await resolveExistingStack(apiPort)
-  if (existing.action === 'open') {
-    await win.loadURL(existing.url)
-    return
-  }
-  if (existing.action === 'bad-port') {
-    // 常见于默认端口被其它进程占用，自动改用备用端口继续启动
-    apiPort = await pickFreePort([18000, 18001, 18002, 18010, 18080, 19000])
-  }
-  if (existing.action === 'conflict') {
-    // 已有 API-only 服务但无 Vite 时，自动起一套桌面专用后端到备用端口
+  // 打包版必须使用当前安装包自带的后端与前端资源，避免误复用旧进程导致“重装后仍是旧界面”。
+  if (!app.isPackaged) {
+    const existing = await resolveExistingStack(apiPort)
+    if (existing.action === 'open') {
+      await win.loadURL(existing.url)
+      return
+    }
+    if (existing.action === 'bad-port') {
+      // 常见于默认端口被其它进程占用，自动改用备用端口继续启动
+      apiPort = await pickFreePort([18000, 18001, 18002, 18010, 18080, 19000])
+    }
+    if (existing.action === 'conflict') {
+      // 已有 API-only 服务但无 Vite 时，自动起一套桌面专用后端到备用端口
+      apiPort = await pickFreePort([18000, 18001, 18002, 18010, 18080, 19000])
+    }
+  } else if (await tcpPortOpen(apiPort)) {
+    // 打包版端口冲突时仅换端口，不复用已有服务。
     apiPort = await pickFreePort([18000, 18001, 18002, 18010, 18080, 19000])
   }
 
@@ -421,6 +485,8 @@ async function bootstrap() {
       EMBEDDING_GATEWAY_PORT: gwPort,
       EMBEDDING_BASE_URL: `http://127.0.0.1:${gwPort}/v1`,
       DB_PATH: path.join(dataRoot, 'chat.db'),
+      SETTINGS_DB_PATH: path.join(dataRoot, 'settings.db'),
+      MCP_CONFIG_PATH: path.join(dataRoot, 'mcp.json'),
       MEM0_DIR: path.join(dataRoot, 'mem0'),
       MEMORY_LEGACY_PATH: path.join(dataRoot, 'qdrant'),
       PYTHONDONTWRITEBYTECODE: '1',
@@ -446,10 +512,16 @@ async function bootstrap() {
     return
   }
 
+  await session.defaultSession.clearCache()
   await win.loadURL(`http://127.0.0.1:${apiPort}/`)
 }
 
 app.whenReady().then(() => {
+  ipcMain.on('save-theme-mode', (_, mode) => {
+    if (mode === 'light' || mode === 'dark' || mode === 'system') {
+      try { fs.writeFileSync(themeFilePath(), mode) } catch (_) {}
+    }
+  })
   try {
     const iconPath = appIconPath()
     if (fs.existsSync(iconPath)) {

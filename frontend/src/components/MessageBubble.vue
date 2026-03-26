@@ -4,7 +4,7 @@
       <!-- AI 消息：左对齐，无气泡 -->
       <template v-if="message.role === 'assistant'">
         <div class="assistant-avatar">
-          <img src="/hamster.svg" alt="AI" width="20" height="20" />
+          <img src="/hamster.svg" alt="AI" />
         </div>
         <div class="assistant-content">
           <!-- 搜索中状态 -->
@@ -71,7 +71,8 @@
 
       <!-- 用户消息：右对齐，有气泡 -->
       <template v-else>
-        <div class="user-message">
+        <div class="user-message-wrap">
+          <div class="user-message">
           <!-- 图片 -->
           <div v-if="message.images?.length" class="user-images">
             <img
@@ -87,6 +88,10 @@
             {{ message.content }}
           </div>
         </div>
+          <div class="user-avatar">
+            <img :src="userAvatar" alt="用户" />
+          </div>
+        </div>
       </template>
     </div>
   </div>
@@ -97,6 +102,7 @@ import { computed, ref } from 'vue'
 import MarkdownIt from 'markdown-it'
 import type { Message } from '@/types'
 import CitationList from './CitationList.vue'
+import { userAvatar } from '@/composables/useAvatar'
 
 const props = defineProps<{ message: Message }>()
 const copied = ref(false)
@@ -174,7 +180,34 @@ function openImage(src: string) {
   flex-direction: column;
   align-items: flex-end;
   gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.user-message-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   max-width: 85%;
+}
+
+.user-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 70%;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--surface-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.user-avatar img {
+  width: 90%;
+  height: 90%;
+  object-fit: cover;
+  display: block;
 }
 
 .user-images {
@@ -213,22 +246,31 @@ function openImage(src: string) {
 }
 
 .assistant-avatar {
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
-  background: #fef3dc;
+  background: #fef3dc13;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  margin-top: 4px;
+  margin-top: -5px; /* ↑↓ 调整头像相对内容的垂直位置 */
   overflow: hidden;
+}
+
+.assistant-avatar img {
+  width: 70%;
+  height: 70%;
+  object-fit: cover;
+  transform: translateY(-10%);
+  transform: translateX(-10%);
+  display: block;
 }
 
 .assistant-content {
   flex: 1;
   min-width: 0;
-  padding-top: 2px;
+  padding-top: 0;
 }
 
 .searching-indicator {

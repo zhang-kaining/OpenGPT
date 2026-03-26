@@ -21,7 +21,12 @@ export const useChatStore = defineStore('chat', () => {
   const showMemoryPanel = ref(false)
   const llmProviders = ref<LlmProviderOption[]>([])
   const selectedLlmProviderId = ref('')
-  let currentAbort: AbortController | null = null
+  const inflightByConv = ref<Record<string, {
+    abort: AbortController
+    userMsg: Message
+    aiMsg: Message
+  }>>({})
+  const loadingConvIds = ref<Set<string>>(new Set())
 
   const currentConversation = computed(() =>
     conversations.value.find(c => c.id === currentConvId.value) ?? null
@@ -32,6 +37,25 @@ export const useChatStore = defineStore('chat', () => {
     const q = searchQuery.value.toLowerCase()
     return conversations.value.filter(c => c.title.toLowerCase().includes(q))
   })
+
+  function setConvLoading(convId: string, loading: boolean) {
+    const next = new Set(loadingConvIds.value)
+    if (loading) next.add(convId)
+    else next.delete(convId)
+    loadingConvIds.value = next
+    isLoading.value = !!(currentConvId.value && next.has(currentConvId.value))
+  }
+
+  function appendInflightIfNeeded(convId: string) {
+    const inflight = inflightByConv.value[convId]
+    if (!inflight) return
+    if (!messages.value.some(m => m.id === inflight.userMsg.id)) {
+      messages.value.push(inflight.userMsg)
+    }
+    if (!messages.value.some(m => m.id === inflight.aiMsg.id)) {
+      messages.value.push(inflight.aiMsg)
+    }
+  }
 
   async function loadConversations() {
     conversations.value = await api.listConversations()
@@ -81,6 +105,8 @@ export const useChatStore = defineStore('chat', () => {
     if (id === currentConvId.value) return
     currentConvId.value = id
     messages.value = await api.getMessages(id)
+    appendInflightIfNeeded(id)
+    isLoading.value = loadingConvIds.value.has(id)
   }
 
   async function createConversationImmediately(folderId: string | null) {
@@ -141,8 +167,6 @@ export const useChatStore = defineStore('chat', () => {
       return
     }
 
-    isLoading.value = true
-
     // 添加用户消息（临时），images 深拷贝防止外部引用被清空
     const userMsg: Message = {
       id: `tmp-user-${Date.now()}`,
@@ -166,11 +190,10 @@ export const useChatStore = defineStore('chat', () => {
       searching: false,
     }
     messages.value.push(aiMsg)
-    // 通过响应式数组索引操作，确保 Vue 能追踪变更
-    const aiIdx = messages.value.length - 1
-    const userIdx = messages.value.length - 2
-
-    currentAbort = new AbortController()
+    const pendingKey = currentConvId.value || `pending:${Date.now()}`
+    const abort = new AbortController()
+    inflightByConv.value[pendingKey] = { abort, userMsg, aiMsg }
+    setConvLoading(pendingKey, true)
 
     try {
       await api.sendMessage(
@@ -180,8 +203,14 @@ export const useChatStore = defineStore('chat', () => {
         {
           onConvId(convId) {
             const folderForConv = pendingFolderId.value
-            messages.value[aiIdx].conversation_id = convId
-            messages.value[userIdx].conversation_id = convId
+            userMsg.conversation_id = convId
+            aiMsg.conversation_id = convId
+            if (inflightByConv.value[pendingKey]) {
+              inflightByConv.value[convId] = inflightByConv.value[pendingKey]
+              delete inflightByConv.value[pendingKey]
+            }
+            setConvLoading(pendingKey, false)
+            setConvLoading(convId, true)
             if (!currentConvId.value) {
               pendingFolderId.value = null
               currentConvId.value = convId
@@ -196,70 +225,74 @@ export const useChatStore = defineStore('chat', () => {
             }
           },
           onToken(token) {
-            messages.value[aiIdx].content += token
-            messages.value[aiIdx].searching = false
-            messages.value[aiIdx].toolCall = undefined
+            aiMsg.content += token
+            aiMsg.searching = false
+            aiMsg.toolCall = undefined
           },
           onSearching(query) {
-            messages.value[aiIdx].searching = true
-            messages.value[aiIdx].searchQuery = query
+            aiMsg.searching = true
+            aiMsg.searchQuery = query
           },
           onSearchResults(_results) {
-            messages.value[aiIdx].searching = false
+            aiMsg.searching = false
           },
           onToolCall(name, _status) {
             const labels: Record<string, string> = {
               feishu_send_message: '正在发送到飞书...',
             }
-            messages.value[aiIdx].toolCall = labels[name] ?? '正在调用工具...'
-            messages.value[aiIdx].searching = false
+            aiMsg.toolCall = labels[name] ?? '正在调用工具...'
+            aiMsg.searching = false
           },
           onDone(citations, usage) {
-            messages.value[aiIdx].citations = citations.length > 0 ? citations : null
-            messages.value[aiIdx].usage = usage ?? null
-            messages.value[aiIdx].streaming = false
-            messages.value[aiIdx].searching = false
-            isLoading.value = false
+            aiMsg.citations = citations.length > 0 ? citations : null
+            aiMsg.usage = usage ?? null
+            aiMsg.streaming = false
+            aiMsg.searching = false
+            const convId = aiMsg.conversation_id || pendingKey
+            delete inflightByConv.value[convId]
+            setConvLoading(convId, false)
             // 只更新当前对话标题，不整体刷新列表（避免触发 selectConversation 副作用）
-            const conv = conversations.value.find(c => c.id === currentConvId.value)
+            const conv = conversations.value.find(c => c.id === convId)
             if (conv && content) {
               conv.title = content.slice(0, 30)
             }
           },
           onError(message) {
-            messages.value[aiIdx].content = `❌ 出错了：${message}`
-            messages.value[aiIdx].streaming = false
-            messages.value[aiIdx].searching = false
-            isLoading.value = false
+            aiMsg.content = `❌ 出错了：${message}`
+            aiMsg.streaming = false
+            aiMsg.searching = false
+            const convId = aiMsg.conversation_id || pendingKey
+            delete inflightByConv.value[convId]
+            setConvLoading(convId, false)
           },
         },
-        currentAbort.signal,
+        abort.signal,
         images,
         pendingFolderId.value,
         selectedLlmProviderId.value || null,
       )
     } catch (e: any) {
       if (e?.name !== 'AbortError') {
-        messages.value[aiIdx].content = `❌ 请求失败：${e?.message ?? '未知错误'}`
+        aiMsg.content = `❌ 请求失败：${e?.message ?? '未知错误'}`
       }
-      messages.value[aiIdx].streaming = false
-      messages.value[aiIdx].searching = false
-      isLoading.value = false
-      currentAbort = null
+      aiMsg.streaming = false
+      aiMsg.searching = false
+      const convId = aiMsg.conversation_id || pendingKey
+      delete inflightByConv.value[convId]
+      setConvLoading(convId, false)
     }
   }
 
   function stopGeneration() {
-    if (currentAbort) {
-      currentAbort.abort()
-      currentAbort = null
+    if (!currentConvId.value) return
+    const inflight = inflightByConv.value[currentConvId.value]
+    if (inflight) {
+      inflight.abort.abort()
+      inflight.aiMsg.streaming = false
+      inflight.aiMsg.searching = false
+      delete inflightByConv.value[currentConvId.value]
+      setConvLoading(currentConvId.value, false)
     }
-    const lastMsg = messages.value[messages.value.length - 1]
-    if (lastMsg?.streaming) {
-      lastMsg.streaming = false
-      lastMsg.searching = false
-    }
-    isLoading.value = false
   }
 
   async function loadLlmCatalog() {
