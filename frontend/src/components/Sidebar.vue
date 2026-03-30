@@ -139,6 +139,35 @@
       </template>
     </div>
 
+    <!-- 模型选择器 -->
+    <div class="model-selector-block">
+      <div class="model-selector-label">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+        <span>模型</span>
+      </div>
+      <div v-if="store.llmProviders.length" class="model-select-wrap">
+        <select
+          v-model="store.selectedLlmProviderId"
+          class="model-select"
+          title="本条对话使用的模型提供方"
+          @change="store.persistLlmProviderSelection()"
+        >
+          <option v-for="p in store.llmProviders" :key="p.id" :value="p.id">
+            {{ p.name || p.id }}
+          </option>
+        </select>
+        <svg class="model-select-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </div>
+      <div v-else class="model-unconfigured">
+        未配置模型 · 请到「设置」添加
+      </div>
+    </div>
+
     <!-- 底部用户区域 -->
     <div class="sidebar-footer">
       <button class="footer-user-btn" @click="openMemory">
@@ -274,12 +303,14 @@ function openMemory() {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: width 0.2s ease, min-width 0.2s ease;
+  transition: width 0.22s ease, min-width 0.22s ease;
+  border-right: 1px solid var(--border-light);
 }
 
 .sidebar.collapsed {
   width: 0;
   min-width: 0;
+  border-right: none;
 }
 
 .sidebar-top {
@@ -337,11 +368,13 @@ function openMemory() {
   border-radius: 8px;
   color: var(--text-primary);
   font-size: 14px;
+  font-family: inherit;
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color 0.18s, box-shadow 0.18s;
 }
 .search-input:focus {
-  border-color: var(--border-strong);
+  border-color: rgba(224, 149, 74, 0.35);
+  box-shadow: 0 0 0 2px var(--accent-glow);
 }
 .search-input::placeholder { color: var(--text-muted); }
 .clear-search {
@@ -366,32 +399,39 @@ function openMemory() {
 }
 
 .conv-section-label {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 700;
   color: var(--text-muted);
-  padding: 8px 8px 4px;
-  letter-spacing: 0.01em;
+  padding: 10px 8px 4px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
 }
 
 .conv-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 8px;
+  padding: 7px 8px;
   border-radius: 8px;
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background 0.12s;
   position: relative;
-  min-height: 40px;
+  min-height: 38px;
 }
 .conv-item:hover { background: var(--bg-hover); }
-.conv-item.active { background: var(--bg-active); }
+.conv-item.active {
+  background: var(--bg-active);
+}
+.conv-item.active .conv-title {
+  color: var(--text-primary);
+  font-weight: 500;
+}
 .conv-item:hover .conv-actions { opacity: 1; }
 
 .conv-title {
   flex: 1;
-  font-size: 14px;
-  color: var(--text-primary);
+  font-size: 13.5px;
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -401,9 +441,10 @@ function openMemory() {
   flex: 1;
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
-  border-radius: 4px;
+  border-radius: 5px;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 13.5px;
+  font-family: inherit;
   padding: 2px 6px;
   outline: none;
 }
@@ -412,7 +453,7 @@ function openMemory() {
   display: flex;
   gap: 2px;
   opacity: 0;
-  transition: opacity 0.1s;
+  transition: opacity 0.12s;
   flex-shrink: 0;
 }
 
@@ -437,8 +478,82 @@ function openMemory() {
   color: var(--text-muted);
   font-size: 13px;
   padding: 24px 12px;
+  line-height: 1.6;
 }
 
+/* ── Model selector ── */
+.model-selector-block {
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+.model-selector-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+  padding-left: 2px;
+}
+
+.model-select-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.model-select {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text-primary);
+  padding: 8px 30px 8px 11px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  box-shadow: inset 0 1px 0 rgba(255, 235, 205, 0.06);
+  transition: border-color 0.18s, box-shadow 0.18s;
+  outline: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-select:hover {
+  border-color: var(--border-strong);
+}
+
+.model-select:focus {
+  border-color: rgba(224, 149, 74, 0.4);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.model-select-chevron {
+  position: absolute;
+  right: 9px;
+  pointer-events: none;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.model-unconfigured {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 6px 4px;
+  line-height: 1.5;
+}
+
+/* ── Footer ── */
 .sidebar-footer {
   padding: 8px;
   border-top: 1px solid var(--border-light);
@@ -451,8 +566,8 @@ function openMemory() {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 8px;
+  gap: 9px;
+  padding: 7px 8px;
   background: none;
   border: none;
   border-radius: 8px;
@@ -471,10 +586,11 @@ function openMemory() {
 }
 
 .user-avatar {
-  width: 28px;
-  height: 28px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
-  background: #fef3dc;
+  background: var(--accent-light);
+  border: 1px solid rgba(224, 149, 74, 0.2);
   flex-shrink: 0;
   overflow: hidden;
   display: flex;
@@ -483,15 +599,18 @@ function openMemory() {
 }
 
 .avatar-img {
-  width: 90%;
-  height: 90%;
+  width: 82%;
+  height: 82%;
   display: block;
-  object-fit: cover;
+  object-fit: contain; /* contain = 完整显示图片，不裁剪 */
 }
 
 .user-name {
-  font-size: 14px;
+  font-size: 13.5px;
   color: var(--text-primary);
   font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

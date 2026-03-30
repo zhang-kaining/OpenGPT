@@ -20,6 +20,19 @@ if (!/\b127\.0\.0\.1\b/.test(process.env.NO_PROXY || '')) {
 const children = []
 const devRootDir = path.resolve(__dirname, '..')
 
+/** @type {import('electron').BrowserWindow | null} */
+let mainWin = null
+let isQuitting = false
+
+function setupMainWindowClose(win) {
+  win.on('close', (e) => {
+    if (process.platform === 'darwin' && !isQuitting) {
+      e.preventDefault()
+      win.hide()
+    }
+  })
+}
+
 function runtimeRootDir() {
   return app.isPackaged ? process.resourcesPath : devRootDir
 }
@@ -447,6 +460,8 @@ async function bootstrap() {
     const existing = await resolveExistingStack(apiPort)
     if (existing.action === 'open') {
       await win.loadURL(existing.url)
+      mainWin = win
+      setupMainWindowClose(win)
       return
     }
     if (existing.action === 'bad-port') {
@@ -514,6 +529,8 @@ async function bootstrap() {
 
   await session.defaultSession.clearCache()
   await win.loadURL(`http://127.0.0.1:${apiPort}/`)
+  mainWin = win
+  setupMainWindowClose(win)
 }
 
 app.whenReady().then(() => {
@@ -550,11 +567,14 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  isQuitting = true
   killAllChildren()
 })
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
+  if (mainWin && !mainWin.isDestroyed()) {
+    mainWin.show()
+  } else if (BrowserWindow.getAllWindows().length === 0) {
     bootstrap().catch(() => app.quit())
   }
 })

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, reactive } from 'vue'
 import type { Conversation, ConversationFolder, Message, MemoryItem, Citation } from '@/types'
 import * as api from '@/services/api'
 import type { LlmProviderOption } from '@/services/api'
@@ -27,6 +27,7 @@ export const useChatStore = defineStore('chat', () => {
     aiMsg: Message
   }>>({})
   const loadingConvIds = ref<Set<string>>(new Set())
+  let tempSeq = 0
 
   const currentConversation = computed(() =>
     conversations.value.find(c => c.id === currentConvId.value) ?? null
@@ -56,6 +57,12 @@ export const useChatStore = defineStore('chat', () => {
       messages.value.push(inflight.aiMsg)
     }
   }
+
+  function nextTempId(prefix: string): string {
+    tempSeq += 1
+    return `${prefix}-${Date.now()}-${tempSeq}`
+  }
+
 
   async function loadConversations() {
     conversations.value = await api.listConversations()
@@ -168,19 +175,21 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     // 添加用户消息（临时），images 深拷贝防止外部引用被清空
-    const userMsg: Message = {
-      id: `tmp-user-${Date.now()}`,
+    // 用 reactive() 确保闭包里修改属性时 Vue 能检测到变化
+    const userMsg = reactive<Message>({
+      id: nextTempId('tmp-user'),
       conversation_id: currentConvId.value ?? '',
       role: 'user',
       content,
       images: images?.length ? [...images] : undefined,
       created_at: new Date().toISOString(),
-    }
+    })
     messages.value.push(userMsg)
 
     // 添加 AI 消息占位
-    const aiMsg: Message = {
-      id: `tmp-ai-${Date.now()}`,
+    // 用 reactive() 确保 onToken 回调里 aiMsg.content += token 能触发视图更新
+    const aiMsg = reactive<Message>({
+      id: nextTempId('tmp-ai'),
       conversation_id: currentConvId.value ?? '',
       role: 'assistant',
       content: '',
@@ -188,9 +197,9 @@ export const useChatStore = defineStore('chat', () => {
       created_at: new Date().toISOString(),
       streaming: true,
       searching: false,
-    }
+    })
     messages.value.push(aiMsg)
-    const pendingKey = currentConvId.value || `pending:${Date.now()}`
+    const pendingKey = currentConvId.value || nextTempId('pending')
     const abort = new AbortController()
     inflightByConv.value[pendingKey] = { abort, userMsg, aiMsg }
     setConvLoading(pendingKey, true)

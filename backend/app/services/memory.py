@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import sqlite3
+import types
 from datetime import datetime, timezone
 
 from mem0 import Memory
@@ -12,6 +13,38 @@ from app.services import azure_openai as oai_service
 from app.services import runtime_config as rc
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Monkey-patch: mem0 >=1.0 硬编码 json.loads(response)["facts"]，
+# 但部分模型（如 gpt-5.2）返回的 JSON 不一定包含 "facts" 这个 key，
+# 导致 KeyError 使记忆完全无法保存。
+# 这里用一个 json 代理模块替换 mem0.memory.main 中的 json 引用，
+# 使 loads() 在结果缺少 "facts" 时自动补齐。
+# ---------------------------------------------------------------------------
+import mem0.memory.main as _mem0_main  # noqa: E402
+
+_real_json_loads = json.loads
+
+
+def _robust_json_loads(s, *args, **kwargs):
+    result = _real_json_loads(s, *args, **kwargs)
+    if isinstance(result, list):
+        return {"facts": result}
+    if isinstance(result, dict) and "facts" not in result:
+        for v in result.values():
+            if isinstance(v, list):
+                result["facts"] = v
+                return result
+        result["facts"] = []
+    return result
+
+
+_json_proxy = types.ModuleType("json_proxy")
+for _attr in dir(json):
+    if not _attr.startswith("_"):
+        setattr(_json_proxy, _attr, getattr(json, _attr))
+_json_proxy.loads = _robust_json_loads  # type: ignore[attr-defined]
+_mem0_main.json = _json_proxy  # type: ignore[attr-defined]
 
 
 def _resolved_mem0_dir() -> str:
