@@ -22,7 +22,7 @@
 
         <template v-else>
             <!-- 顶部工具栏 -->
-            <div class="toolbar">
+            <div class="toolbar" :class="{ desktop: isDesktop }">
                 <input
                     v-model="store.currentTitle"
                     class="title-input"
@@ -193,12 +193,14 @@
 import { ref, computed, inject, watch } from "vue";
 import type { Ref } from "vue";
 import MarkdownIt from "markdown-it";
+import hljs from "highlight.js";
 import { useNoteStore } from "@/stores/note";
 import { useChatStore } from "@/stores/chat";
 
 const store = useNoteStore();
 const chatStore = useChatStore();
 const currentView = inject<Ref<string>>("currentView");
+const isDesktop = inject<Ref<boolean>>("isDesktop", ref(false));
 
 type ViewMode = "edit" | "preview" | "split";
 const viewMode = ref<ViewMode>("edit");
@@ -208,6 +210,13 @@ const md = new MarkdownIt({
     linkify: true,
     typographer: true,
     breaks: true,
+    highlight(str: string, lang: string): string {
+        const validLang = lang && hljs.getLanguage(lang) ? lang : "";
+        const highlighted = validLang
+            ? hljs.highlight(str, { language: validLang, ignoreIllegals: true }).value
+            : md.utils.escapeHtml(str);
+        return `<pre class="hljs"><code class="hljs-code">${highlighted}</code></pre>`;
+    },
 });
 
 const renderedHtml = computed(() => md.render(store.currentContent || ""));
@@ -290,6 +299,12 @@ async function sendToChat() {
     flex-shrink: 0;
 }
 
+.toolbar.desktop {
+    padding-top: 34px;
+    min-height: 62px;
+    -webkit-app-region: drag;
+}
+
 .title-input {
     flex: 1;
     font-size: 18px;
@@ -299,6 +314,7 @@ async function sendToChat() {
     border: none;
     outline: none;
     min-width: 0;
+    -webkit-app-region: no-drag;
 }
 .title-input::placeholder {
     color: var(--text-muted);
@@ -310,6 +326,7 @@ async function sendToChat() {
     align-items: center;
     gap: 4px;
     flex-shrink: 0;
+    -webkit-app-region: no-drag;
 }
 
 .divider {
@@ -323,8 +340,9 @@ async function sendToChat() {
     display: flex;
     align-items: center;
     gap: 5px;
-    height: 30px;
-    padding: 0 8px;
+    height: 34px;
+    min-width: 34px;
+    padding: 0 10px;
     background: none;
     border: none;
     border-radius: 6px;
@@ -332,6 +350,7 @@ async function sendToChat() {
     cursor: pointer;
     font-size: 13px;
     transition: background 0.12s, color 0.12s;
+    -webkit-app-region: no-drag;
 }
 .tool-btn:hover {
     background: var(--bg-hover);
@@ -454,6 +473,28 @@ async function sendToChat() {
     background: none;
     color: var(--code-block-text);
 }
+
+.md-preview :deep(pre.hljs) {
+    margin: 0.8em 0;
+    border: 1px solid var(--border-light);
+}
+.md-preview :deep(code.hljs-code) {
+    display: block;
+    white-space: pre;
+    font-family: "JetBrains Mono", "Fira Mono", Menlo, Monaco, Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.65;
+}
+.md-preview :deep(.hljs-comment),
+.md-preview :deep(.hljs-quote) { color: #7a6e5e; font-style: italic; }
+.md-preview :deep(.hljs-keyword),
+.md-preview :deep(.hljs-selector-tag),
+.md-preview :deep(.hljs-built_in),
+.md-preview :deep(.hljs-name) { color: #c97eb0; }
+.md-preview :deep(.hljs-string),
+.md-preview :deep(.hljs-addition) { color: #9fbe8c; }
+.md-preview :deep(.hljs-number),
+.md-preview :deep(.hljs-regexp) { color: #c4956a; }
 .md-preview :deep(blockquote) {
     border-left: 3px solid var(--blockquote-border);
     padding-left: 12px;

@@ -1,4 +1,5 @@
 import errno
+import json
 import os
 
 from pydantic import BaseModel, ConfigDict
@@ -83,6 +84,8 @@ def _coerce_patch_value(key: str, v: object, template: dict) -> object:
     if ann is str:
         if isinstance(v, bool):
             return "1" if v else "0"
+        if key in ("llm_providers_json", "embedding_providers_json") and isinstance(v, (list, dict)):
+            return json.dumps(v, ensure_ascii=False)
         return str(v).strip() if v is not None else ""
     if ann is bool:
         if isinstance(v, bool):

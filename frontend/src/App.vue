@@ -2,6 +2,17 @@
   <LoginPage v-if="!isLoggedIn" @success="onLoginSuccess" />
   <div v-else id="app-layout" :class="{ 'desktop-shell': isDesktop }">
     <div v-if="isDesktop" class="desktop-drag-strip"></div>
+    <button
+      v-if="sidebarCollapsed"
+      class="global-expand-sidebar-btn"
+      title="展开侧边栏"
+      @click="sidebarCollapsed = false"
+    >
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="18" height="18" rx="2" />
+        <path d="M9 3v18" />
+      </svg>
+    </button>
     <Sidebar />
     <ChatView v-show="currentView === 'chat'" />
     <NoteView v-if="currentView === 'notes'" />
@@ -68,5 +79,33 @@ onMounted(() => {
   height: 28px;
   z-index: 10;
   -webkit-app-region: drag;
+}
+
+.global-expand-sidebar-btn {
+  position: absolute;
+  left: 12px;
+  bottom: 14px;
+  z-index: 30;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  -webkit-app-region: no-drag;
+}
+
+.global-expand-sidebar-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+#app-layout.desktop-shell .global-expand-sidebar-btn {
+  bottom: 16px;
 }
 </style>

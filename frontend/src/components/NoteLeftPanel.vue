@@ -1,7 +1,7 @@
 <template>
   <div class="note-left">
     <!-- 顶部工具栏 -->
-    <div class="panel-top">
+    <div class="panel-top" :class="{ desktop: isDesktop }">
       <span class="panel-label">备忘录</span>
       <div class="panel-actions">
         <button class="icon-btn" title="新建文件夹" @click="onNewFolder(null)">
@@ -46,12 +46,15 @@
 </template>
 
 <script setup lang="ts">
+import { inject, ref } from 'vue'
+import type { Ref } from 'vue'
 import { useNoteStore } from '@/stores/note'
 import { openPrompt } from '@/composables/useConfirmDialog'
 import NoteFolderNode from './NoteFolderNode.vue'
 import NoteItem from './NoteItem.vue'
 
 const store = useNoteStore()
+const isDesktop = inject<Ref<boolean>>('isDesktop', ref(false))
 
 async function onNewFolder(parentId: string | null) {
   const name = await openPrompt({ title: '新建文件夹', placeholder: '文件夹名称' })
@@ -83,6 +86,12 @@ async function onNewFolder(parentId: string | null) {
   border-bottom: 1px solid var(--border-light);
 }
 
+.panel-top.desktop {
+  padding-top: 34px;
+  min-height: 62px;
+  -webkit-app-region: drag;
+}
+
 .panel-label {
   flex: 1;
   font-size: 13px;
@@ -109,6 +118,7 @@ async function onNewFolder(parentId: string | null) {
   color: var(--text-muted);
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
+  -webkit-app-region: no-drag;
 }
 .icon-btn:hover {
   background: var(--bg-hover);

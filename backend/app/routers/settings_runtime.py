@@ -109,9 +109,15 @@ async def put_runtime_settings(body: RuntimePutBody, _user: dict = Depends(get_c
         patch["sqlite_timeout_seconds"] = t
 
     raw_json = patch.get("llm_providers_json")
+    if isinstance(raw_json, (list, dict)):
+        raw_json = json.dumps(raw_json, ensure_ascii=False)
+        patch["llm_providers_json"] = raw_json
     if isinstance(raw_json, str) and raw_json.strip():
         _parse_provider_json(raw_json, "llm_providers_json")
     emb_json = patch.get("embedding_providers_json")
+    if isinstance(emb_json, (list, dict)):
+        emb_json = json.dumps(emb_json, ensure_ascii=False)
+        patch["embedding_providers_json"] = emb_json
     if isinstance(emb_json, str) and emb_json.strip():
         _parse_provider_json(emb_json, "embedding_providers_json")
     rc.update_raw(patch)

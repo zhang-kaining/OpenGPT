@@ -12,6 +12,7 @@ from app.services.auth import init_users_table
 from app.services.note import init_note_tables
 from app.services.skill_manager import get_skill_manager
 from app.services.mcp_manager import get_mcp_manager
+from app.services.feishu_event_client import get_feishu_event_client
 from app.routers import auth, chat, conversations, folders, memory, news, notes, settings_runtime, skills
 from app.services import feishu as feishu_service
 
@@ -23,11 +24,15 @@ async def lifespan(app: FastAPI):
     await init_db()
     await init_users_table()
     await init_note_tables()
-    # 加载 Skills
     get_skill_manager().load()
-    # 加载 MCP（异步，失败不影响启动）
     await get_mcp_manager().load()
+    
+    feishu_client = get_feishu_event_client()
+    await feishu_client.start()
+    
     yield
+    
+    await feishu_client.stop()
 
 
 app = FastAPI(title="OpenGPT API", lifespan=lifespan)
@@ -65,6 +70,16 @@ async def feishu_permissions():
         return await feishu_service.get_app_permissions_info()
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.get("/api/feishu/event-status")
+async def feishu_event_status():
+    """查询飞书事件客户端状态"""
+    feishu_client = get_feishu_event_client()
+    return {
+        "running": feishu_client.is_running(),
+        "configured": bool(get_settings().feishu_app_id and get_settings().feishu_app_secret)
+    }
 
 
 _static = os.environ.get("OpenGPT_STATIC_DIR", "").strip()

@@ -315,6 +315,14 @@ export const useChatStore = defineStore('chat', () => {
       else if (data.active_id && ids.has(data.active_id)) picked = data.active_id
       else if (data.providers?.[0]?.id) picked = data.providers[0].id
       selectedLlmProviderId.value = picked
+
+      // 保证“页面当前模型”与后端运行时 active 保持一致（飞书入口依赖后端 active）
+      const serverActive = (data.active_id || '').trim()
+      if (picked && picked !== serverActive) {
+        void api.putRuntimeSettings({ active_llm_provider_id: picked }).catch((e) => {
+          console.warn('同步 active_llm_provider_id 失败:', e)
+        })
+      }
     } catch {
       llmProviders.value = []
     }
@@ -326,7 +334,9 @@ export const useChatStore = defineStore('chat', () => {
       if (id) localStorage.setItem(LLM_PROVIDER_LS_KEY, id)
       else localStorage.removeItem(LLM_PROVIDER_LS_KEY)
     }
-    void api.putRuntimeSettings({ active_llm_provider_id: id || null }).catch(() => {})
+    void api.putRuntimeSettings({ active_llm_provider_id: id || null }).catch((e) => {
+      console.warn('保存 active_llm_provider_id 失败:', e)
+    })
   }
 
   async function loadMemories() {
