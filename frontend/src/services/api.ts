@@ -93,6 +93,14 @@ export interface FeishuRecipient {
   name: string
 }
 
+export interface FeishuBindStatus {
+  bound: boolean
+  bound_open_id_masked: string
+  bound_at: string | null
+  active_code: string
+  active_code_expires_at: string | null
+}
+
 export async function fetchFeishuRecipients(): Promise<FeishuRecipient[]> {
   const res = await authFetch(`${BASE}/settings/feishu-recipients`)
   if (!res.ok) {
@@ -101,6 +109,28 @@ export async function fetchFeishuRecipients(): Promise<FeishuRecipient[]> {
   }
   const data = await res.json()
   return Array.isArray(data.items) ? data.items : []
+}
+
+export async function fetchFeishuBindStatus(): Promise<FeishuBindStatus> {
+  const res = await authFetch(`${BASE}/settings/feishu-bind`)
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function createFeishuBindCode(ttlSeconds = 120): Promise<{ code: string; expires_at: string }> {
+  const res = await authFetch(`${BASE}/settings/feishu-bind-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ttl_seconds: ttlSeconds }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || `HTTP ${res.status}`)
+  }
+  return res.json()
 }
 
 export interface LlmProviderOption {

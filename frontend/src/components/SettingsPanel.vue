@@ -69,6 +69,22 @@
             </div>
           </div>
 
+          <div class="setting-group">
+            <div class="setting-label">AI 回复展示</div>
+            <div class="render-mode-options">
+              <button
+                v-for="opt in renderModeOptions"
+                :key="opt.value"
+                class="render-mode-option"
+                :class="{ active: messageRenderMode === opt.value }"
+                @click="setMessageRenderMode(opt.value)"
+              >
+                <span class="render-mode-title">{{ opt.label }}</span>
+                <span class="render-mode-desc">{{ opt.desc }}</span>
+              </button>
+            </div>
+          </div>
+
           <!-- 修改密码 -->
           <div class="setting-group" style="margin-top: 16px;">
             <div class="setting-label">修改密码</div>
@@ -96,6 +112,49 @@
               <button class="btn-primary pw-submit" :disabled="pwLoading" @click="handleChangePw">
                 {{ pwLoading ? '提交中...' : '修改密码' }}
               </button>
+            </div>
+          </div>
+
+          <div class="setting-group" style="margin-top: 16px;">
+            <div class="setting-label">飞书账号绑定</div>
+            <div class="binding-card">
+              <div class="binding-row">
+                <span class="binding-key">当前状态</span>
+                <span class="binding-value" :class="feishuBindStatus.bound ? 'ok' : ''">
+                  {{ feishuBindStatus.bound ? `已绑定 ${feishuBindStatus.bound_open_id_masked}` : '未绑定' }}
+                </span>
+              </div>
+              <div v-if="feishuBindStatus.bound_at" class="binding-row">
+                <span class="binding-key">绑定时间</span>
+                <span class="binding-value">{{ feishuBindStatus.bound_at }}</span>
+              </div>
+              <div class="binding-row">
+                <span class="binding-key">临时绑定码</span>
+                <span class="binding-code">{{ feishuBindStatus.active_code || '未生成' }}</span>
+              </div>
+              <div v-if="feishuBindStatus.active_code_expires_at" class="binding-row">
+                <span class="binding-key">到期时间</span>
+                <span class="binding-value">{{ feishuBindStatus.active_code_expires_at }}</span>
+              </div>
+              <div class="binding-hint">
+                在飞书中给机器人发送 <code>/bind 绑定码</code> 完成绑定。绑定码 2 分钟内有效，成功后立即失效。
+              </div>
+              <div class="binding-actions">
+                <button
+                  class="btn-secondary"
+                  type="button"
+                  :disabled="loadingFeishuBindCode || feishuBindStatus.bound"
+                  @click="handleCreateFeishuBindCode"
+                >
+                  {{ loadingFeishuBindCode ? '生成中...' : '生成绑定码' }}
+                </button>
+                <button class="btn-secondary" type="button" :disabled="loadingFeishuBindStatus" @click="loadFeishuBindStatus">
+                  {{ loadingFeishuBindStatus ? '刷新中...' : '刷新状态' }}
+                </button>
+              </div>
+              <div v-if="feishuBindMsg" class="save-result" :class="feishuBindMsgOk ? 'ok' : 'err'">
+                {{ feishuBindMsg }}
+              </div>
             </div>
           </div>
         </div>
@@ -446,6 +505,8 @@ import { ref, watch, computed } from 'vue'
 import { themeMode, setThemeMode } from '@/composables/useTheme'
 import type { ThemeMode } from '@/composables/useTheme'
 import { avatarPresets, userAvatar, setUserAvatar, uploadUserAvatar } from '@/composables/useAvatar'
+import { messageRenderMode, setMessageRenderMode } from '@/composables/useMessageRenderMode'
+import type { MessageRenderMode } from '@/composables/useMessageRenderMode'
 import { openConfirm } from '@/composables/useConfirmDialog'
 import * as api from '@/services/api'
 
@@ -468,6 +529,11 @@ const themeOptions: { value: ThemeMode; label: string }[] = [
   { value: 'system', label: '跟随系统' },
 ]
 
+const renderModeOptions: { value: MessageRenderMode; label: string; desc: string }[] = [
+  { value: 'structured', label: '结构化卡片', desc: '更像阅读卡片，标题和表格更清晰' },
+  { value: 'markdown', label: '原始 Markdown', desc: '保持传统渲染，适合看原格式' },
+]
+
 // ── Skills ────────────────────────────────────────────────────────────────────
 
 interface SkillInfo {
@@ -484,6 +550,14 @@ interface FeishuRecipient {
   name: string
 }
 
+interface FeishuBindStatus {
+  bound: boolean
+  bound_open_id_masked: string
+  bound_at: string | null
+  active_code: string
+  active_code_expires_at: string | null
+}
+
 const skills = ref<SkillInfo[]>([])
 const loadingSkills = ref(false)
 const togglingSkill = ref<string | null>(null)
@@ -493,6 +567,17 @@ const feishuRecipients = ref<FeishuRecipient[]>([])
 const loadingFeishuRecipients = ref(false)
 const feishuRecipientsMsg = ref('')
 const feishuRecipientsOk = ref(false)
+const feishuBindStatus = ref<FeishuBindStatus>({
+  bound: false,
+  bound_open_id_masked: '',
+  bound_at: null,
+  active_code: '',
+  active_code_expires_at: null,
+})
+const loadingFeishuBindStatus = ref(false)
+const loadingFeishuBindCode = ref(false)
+const feishuBindMsg = ref('')
+const feishuBindMsgOk = ref(false)
 
 async function loadSkills() {
   loadingSkills.value = true
@@ -522,7 +607,7 @@ async function toggleSkill(name: string, enabled: boolean) {
     if (!res.ok) {
       throw new Error(data.detail || `HTTP ${res.status}`)
     }
-    const skill = skills.value.find(s => s.name === name)
+    const skill = skills.value.find((s: SkillInfo) => s.name === name)
     if (skill) skill.enabled = !!data.enabled
     skillsMsgOk.value = true
     skillsMsg.value = `已${data.enabled ? '启用' : '禁用'} ${name}`
@@ -570,6 +655,40 @@ async function loadFeishuRecipients() {
     feishuRecipientsMsg.value = e?.message || '拉取失败'
   } finally {
     loadingFeishuRecipients.value = false
+  }
+}
+
+async function loadFeishuBindStatus() {
+  loadingFeishuBindStatus.value = true
+  feishuBindMsg.value = ''
+  try {
+    feishuBindStatus.value = await api.fetchFeishuBindStatus()
+  } catch (e: any) {
+    feishuBindMsgOk.value = false
+    feishuBindMsg.value = e?.message || '加载绑定状态失败'
+  } finally {
+    loadingFeishuBindStatus.value = false
+  }
+}
+
+async function handleCreateFeishuBindCode() {
+  loadingFeishuBindCode.value = true
+  feishuBindMsg.value = ''
+  try {
+    const data = await api.createFeishuBindCode(120)
+    feishuBindStatus.value = {
+      ...feishuBindStatus.value,
+      active_code: data.code,
+      active_code_expires_at: data.expires_at,
+    }
+    feishuBindMsgOk.value = true
+    feishuBindMsg.value = '绑定码已生成，请在 2 分钟内去飞书发送 /bind 绑定码'
+    await loadFeishuBindStatus()
+  } catch (e: any) {
+    feishuBindMsgOk.value = false
+    feishuBindMsg.value = e?.message || '生成绑定码失败'
+  } finally {
+    loadingFeishuBindCode.value = false
   }
 }
 
@@ -890,7 +1009,7 @@ function getConfigTooltip(key: string): string {
 const basicConfigKeys = computed(() =>
   mergeKnownWithDynamic(
     BASIC_CONFIG_KEYS,
-    sortedRuntimeKeys.value.filter((k) =>
+    sortedRuntimeKeys.value.filter((k: string) =>
       k.startsWith('tavily_') || k === 'feishu_app_id' || k === 'feishu_app_secret' || k === 'max_registered_users',
     ),
   ),
@@ -900,7 +1019,7 @@ const advancedOpsConfigKeys = computed(() =>
   mergeKnownWithDynamic(
     ADVANCED_OPS_CONFIG_KEYS,
     sortedRuntimeKeys.value.filter(
-      (k) =>
+      (k: string) =>
         (k.startsWith('feishu_') && !basicConfigKeys.value.includes(k))
         || ['db_path', 'sqlite_timeout_seconds', 'jwt_secret', 'mem0_dir'].includes(k),
     ),
@@ -910,15 +1029,15 @@ const advancedOpsConfigKeys = computed(() =>
 const migrationCompatConfigKeys = computed(() =>
   mergeKnownWithDynamic(
     MIGRATION_COMPAT_CONFIG_KEYS,
-    sortedRuntimeKeys.value.filter((k) => k.startsWith('memory_')),
+    sortedRuntimeKeys.value.filter((k: string) => k.startsWith('memory_')),
   ),
 )
 
 const activeLlmIdOptions = computed(() =>
-  llmRows.value.map((r) => r.id.trim()).filter(Boolean),
+  llmRows.value.map((r: LlmProviderRow) => r.id.trim()).filter(Boolean),
 )
 const activeEmbeddingIdOptions = computed(() =>
-  embeddingRows.value.map((r) => r.id.trim()).filter(Boolean),
+  embeddingRows.value.map((r: EmbeddingProviderRow) => r.id.trim()).filter(Boolean),
 )
 
 const savingRuntime = ref(false)
@@ -983,8 +1102,8 @@ function buildLlmProviderPayload(row: LlmProviderRow): Record<string, string> {
 
 function syncLlmRowsToFormJson() {
   const list = llmRows.value
-    .filter((r) => r.name.trim())
-    .map((r) => buildLlmProviderPayload(r))
+    .filter((r: LlmProviderRow) => r.name.trim())
+    .map((r: LlmProviderRow) => buildLlmProviderPayload(r))
   runtimeForm.value.llm_providers_json = JSON.stringify(list)
 }
 
@@ -997,7 +1116,7 @@ async function removeLlmRow(i: number) {
   if (!removed) return
   llmRows.value.splice(i, 1)
   syncLlmRowsToFormJson()
-  const remainingIds = llmRows.value.map((r) => r.name.trim()).filter(Boolean)
+  const remainingIds = llmRows.value.map((r: LlmProviderRow) => r.name.trim()).filter(Boolean)
   const activeNow = (runtimeForm.value.active_llm_provider_id || '').trim()
   const nextActive = activeNow && !remainingIds.includes(activeNow) ? (remainingIds[0] || null) : (activeNow || null)
   try {
@@ -1065,8 +1184,8 @@ function buildEmbeddingProviderPayload(row: EmbeddingProviderRow): Record<string
 
 function syncEmbeddingRowsToFormJson() {
   const list = embeddingRows.value
-    .filter((r) => r.name.trim())
-    .map((r) => buildEmbeddingProviderPayload(r))
+    .filter((r: EmbeddingProviderRow) => r.name.trim())
+    .map((r: EmbeddingProviderRow) => buildEmbeddingProviderPayload(r))
   runtimeForm.value.embedding_providers_json = JSON.stringify(list)
 }
 
@@ -1080,7 +1199,7 @@ function upsertById(list: Record<string, unknown>[], item: Record<string, unknow
 function hasDuplicateLlmName(name: string, idx: number): boolean {
   const target = name.trim()
   if (!target) return false
-  return llmRows.value.some((r, i) => i !== idx && r.name.trim() === target)
+  return llmRows.value.some((r: LlmProviderRow, i: number) => i !== idx && r.name.trim() === target)
 }
 
 function normalizeDim(v: unknown): number | null {
@@ -1222,7 +1341,7 @@ async function removeEmbeddingRow(i: number) {
   if (!removed) return
   embeddingRows.value.splice(i, 1)
   syncEmbeddingRowsToFormJson()
-  const remainingIds = embeddingRows.value.map((r) => r.name.trim()).filter(Boolean)
+  const remainingIds = embeddingRows.value.map((r: EmbeddingProviderRow) => r.name.trim()).filter(Boolean)
   const activeNow = (runtimeForm.value.active_embedding_provider_id || '').trim()
   const nextActive = activeNow && !remainingIds.includes(activeNow) ? (remainingIds[0] || null) : (activeNow || null)
   try {
@@ -1266,6 +1385,7 @@ async function reloadAllSettingsData() {
     loadRuntimeSettings(),
     loadSkills(),
     loadMcpConfig(),
+    loadFeishuBindStatus(),
   ])
 }
 
@@ -1320,7 +1440,7 @@ async function saveRuntimeSettings() {
   runtimeSaveMsg.value = ''
   try {
     const values: Record<string, unknown> = {}
-    for (const [k, v] of Object.entries(runtimeForm.value)) {
+    for (const [k, v] of Object.entries(runtimeForm.value) as [string, string][]) {
       if (v === '***') continue
       if (v.trim() === '') {
         values[k] = null
@@ -1347,11 +1467,12 @@ async function saveRuntimeSettings() {
   }
 }
 
-watch(() => props.visible, (val) => {
+watch(() => props.visible, (val: boolean) => {
   if (val) {
     loadSkills()
     loadMcpConfig()
     loadRuntimeSettings()
+    loadFeishuBindStatus()
     mcpSaveResult.value = null
     runtimeSaveMsg.value = ''
     oldPw.value = ''
@@ -1362,7 +1483,7 @@ watch(() => props.visible, (val) => {
   }
 })
 
-watch(activeTab, async (tab) => {
+watch(activeTab, async (tab: string) => {
   if (!props.visible) return
   if (tab === 'skills') {
     await loadSkills()
@@ -1370,6 +1491,10 @@ watch(activeTab, async (tab) => {
   }
   if (tab === 'mcp') {
     await loadMcpConfig()
+    return
+  }
+  if (tab === 'general') {
+    await loadFeishuBindStatus()
     return
   }
   if (tab === 'llm' || tab === 'embedding' || tab === 'env') {
@@ -1949,6 +2074,97 @@ watch(activeTab, async (tab) => {
 }
 .avatar-upload input {
   display: none;
+}
+
+.render-mode-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.render-mode-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 14px 14px 13px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.render-mode-option:hover {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+
+.render-mode-option.active {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--text-primary);
+}
+
+.render-mode-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.render-mode-desc {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.render-mode-option.active .render-mode-desc {
+  color: var(--text-secondary);
+}
+
+.binding-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  background: var(--surface-1);
+}
+.binding-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+.binding-key {
+  color: var(--text-secondary);
+}
+.binding-value {
+  color: var(--text-primary);
+  word-break: break-all;
+  text-align: right;
+}
+.binding-value.ok {
+  color: var(--accent);
+}
+.binding-code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 14px;
+  color: var(--text-primary);
+  letter-spacing: 0.08em;
+}
+.binding-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.binding-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 /* Password form */

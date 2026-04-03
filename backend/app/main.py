@@ -10,6 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.services.conversation import init_db
 from app.services.auth import init_users_table
 from app.services.note import init_note_tables
+from app.services.feishu_binding import init_feishu_binding_tables
 from app.services.skill_manager import get_skill_manager
 from app.services.mcp_manager import get_mcp_manager
 from app.services.feishu_event_client import get_feishu_event_client
@@ -24,6 +25,7 @@ async def lifespan(app: FastAPI):
     await init_db()
     await init_users_table()
     await init_note_tables()
+    await init_feishu_binding_tables()
     get_skill_manager().load()
     await get_mcp_manager().load()
     

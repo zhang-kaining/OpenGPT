@@ -40,6 +40,8 @@ async def _process_im_message_event(data) -> None:
     3) 回发到原会话
     """
     from app.services import azure_openai as oai_service
+    from app.services import conversation as conv_service
+    from app.services import feishu_binding as feishu_binding_service
     from app.services import feishu as feishu_service
     from app.services import memory as mem_service
 
@@ -78,14 +80,50 @@ async def _process_im_message_event(data) -> None:
         logger.info("空文本消息，跳过")
         return
 
-    user_id = f"feishu:{sender_open_id}"
+    bind_code = feishu_binding_service.parse_bind_command(user_text)
+    if bind_code:
+        bind_result = await feishu_binding_service.bind_open_id(sender_open_id, bind_code)
+        if bind_result.get("ok"):
+            await feishu_binding_service.reset_active_conversation(
+                sender_open_id,
+                str(bind_result.get("user_id") or ""),
+            )
+        result = await feishu_service.send_message(
+            str(bind_result.get("message") or "绑定失败"),
+            receive_id=chat_id,
+        )
+        if not result.get("success"):
+            logger.error("飞书绑定结果发送失败: %s", result.get("error", "unknown"))
+        return
+
+    user_id = await feishu_binding_service.resolve_user_id(sender_open_id)
+    if feishu_binding_service.is_new_command(user_text):
+        await feishu_binding_service.reset_active_conversation(sender_open_id, user_id)
+        result = await feishu_service.send_message(
+            "已为你开启新的飞书对话，后续消息将不再使用上一段对话历史。",
+            receive_id=chat_id,
+        )
+        if not result.get("success"):
+            logger.error("飞书 /new 回复发送失败: %s", result.get("error", "unknown"))
+        return
+
+    conv_id = await feishu_binding_service.get_or_create_active_conversation(sender_open_id, user_id)
+    await conv_service.add_message(conv_id, "user", user_text)
+    history = await conv_service.get_messages(conv_id)
+    messages = [
+        {"role": m["role"], "content": m["content"]}
+        for m in history
+        if m["role"] in ("user", "assistant")
+    ][-20:]
     memories = mem_service.search_memories(user_text, user_id)
-    messages = [{"role": "user", "content": user_text}]
 
     reply = ""
+    citations = []
     async for ev in oai_service.stream_chat(messages, memories, enable_search=False):
         if ev.get("type") == "token":
             reply += ev.get("content", "")
+        elif ev.get("type") == "done":
+            citations = ev.get("citations", []) or []
         elif ev.get("type") == "error":
             logger.error("LLM 处理飞书消息失败: %s", ev.get("message", "unknown"))
 
@@ -98,11 +136,15 @@ async def _process_im_message_event(data) -> None:
         logger.error("飞书回复发送失败: %s", result.get("error", "unknown"))
         return
 
+    await conv_service.add_message(conv_id, "assistant", reply, citations or None)
+    all_msgs = await conv_service.get_messages(conv_id)
+    if len(all_msgs) == 2:
+        await conv_service.update_conversation_title(conv_id, user_text[:30].replace("\n", " "))
     mem_service.add_memories(
         [{"role": "user", "content": user_text}, {"role": "assistant", "content": reply}],
         user_id,
     )
-    logger.info("飞书消息处理完成并已回发: chat_id=%s", chat_id)
+    logger.info("飞书消息处理完成并已回发: chat_id=%s conv_id=%s", chat_id, conv_id)
 
 
 def _run_feishu_ws_client(log_level: str = "INFO"):

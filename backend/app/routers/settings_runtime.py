@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from app.config import Settings, get_settings, reload_runtime_clients
 from app.deps import get_current_user
+from app.services import feishu_binding as feishu_binding_service
 from app.services import feishu as feishu_service
 from app.services import runtime_config as rc
 
@@ -50,6 +51,10 @@ class ProviderValidateBody(BaseModel):
 
 class CleanupEmbeddingStoreBody(BaseModel):
     provider: dict[str, Any]
+
+
+class FeishuBindCodeCreateBody(BaseModel):
+    ttl_seconds: int = 120
 
 
 def _parse_provider_json(raw: str, field_name: str) -> list[dict[str, Any]]:
@@ -332,3 +337,19 @@ async def feishu_recipients(_user: dict = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"拉取飞书可见成员失败: {e}") from e
     return {"items": users}
+
+
+@router.get("/feishu-bind")
+async def feishu_bind_status(user: dict = Depends(get_current_user)):
+    return await feishu_binding_service.get_binding_status(user["id"])
+
+
+@router.post("/feishu-bind-code")
+async def create_feishu_bind_code(body: FeishuBindCodeCreateBody, user: dict = Depends(get_current_user)):
+    try:
+        data = await feishu_binding_service.create_bind_code(user["id"], ttl_seconds=body.ttl_seconds)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"生成绑定码失败: {e}") from e
+    return data

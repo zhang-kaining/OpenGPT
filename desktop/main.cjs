@@ -23,6 +23,7 @@ const devRootDir = path.resolve(__dirname, '..')
 /** @type {import('electron').BrowserWindow | null} */
 let mainWin = null
 let isQuitting = false
+let isShuttingDownChildren = false
 
 function setupMainWindowClose(win) {
   win.on('close', (e) => {
@@ -201,14 +202,54 @@ function createShellWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
     },
   })
-  win.once('ready-to-show', () => win.show())
   return win
 }
 
 async function createLoadingWindow(firstTimeDeps) {
   const win = createShellWindow()
   await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(buildLoadingHtml({ firstTimeDeps })))
+  if (!win.isDestroyed()) win.show()
   return win
+}
+
+function buildLoadRetryHtml(message = '正在连接本地服务，请稍候…') {
+  const bg = resolveThemeBg()
+  const isDark = bg !== '#ffffff'
+  const fg = isDark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.72)'
+  const muted = isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.42)'
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>OpenGPT</title>
+<style>
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,sans-serif;background:${bg};color:${fg};display:flex;align-items:center;justify-content:center;min-height:100vh}
+.box{max-width:420px;padding:24px;text-align:center}
+.title{font-size:15px;font-weight:600;margin-bottom:10px}
+.hint{font-size:12px;line-height:1.6;color:${muted}}
+</style></head><body><div class="box"><div class="title">OpenGPT</div><div class="hint">${message}</div></div></body></html>`
+}
+
+async function loadWindowUrlWithRetry(win, url, opts = {}) {
+  const retries = Math.max(1, Number(opts.retries || 1))
+  const delayMs = Math.max(200, Number(opts.delayMs || 800))
+  for (let attempt = 1; attempt <= retries; attempt += 1) {
+    if (win.isDestroyed()) return false
+    try {
+      await win.loadURL(url)
+      if (!win.isVisible()) win.show()
+      return true
+    } catch (e) {
+      if (isQuitting || isShuttingDownChildren || win.isDestroyed()) return false
+      if (attempt >= retries) throw e
+      try {
+        await win.loadURL(
+          'data:text/html;charset=utf-8,' +
+            encodeURIComponent(buildLoadRetryHtml(`连接本地服务失败，正在重试（${attempt + 1}/${retries}）…`)),
+        )
+      } catch (_) {
+        /* ignore fallback page failure */
+      }
+      await new Promise((r) => setTimeout(r, delayMs))
+    }
+  }
+  return false
 }
 
 async function ensureRuntimeVenv(backendRoot, dataRoot, setupLogPath) {
@@ -459,7 +500,7 @@ async function bootstrap() {
   if (!app.isPackaged) {
     const existing = await resolveExistingStack(apiPort)
     if (existing.action === 'open') {
-      await win.loadURL(existing.url)
+      await loadWindowUrlWithRetry(win, existing.url, { retries: 6, delayMs: 700 })
       mainWin = win
       setupMainWindowClose(win)
       return
@@ -528,7 +569,7 @@ async function bootstrap() {
   }
 
   await session.defaultSession.clearCache()
-  await win.loadURL(`http://127.0.0.1:${apiPort}/`)
+  await loadWindowUrlWithRetry(win, `http://127.0.0.1:${apiPort}/`, { retries: 20, delayMs: 800 })
   mainWin = win
   setupMainWindowClose(win)
 }
@@ -561,13 +602,16 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   // macOS：关窗不等于退出，保留本机后端进程，再次点开 Dock 可秒开；真正退出用 Cmd+Q（会走 before-quit）
   if (process.platform !== 'darwin') {
-    killAllChildren()
     app.quit()
   }
 })
 
 app.on('before-quit', () => {
   isQuitting = true
+})
+
+app.on('will-quit', () => {
+  isShuttingDownChildren = true
   killAllChildren()
 })
 
