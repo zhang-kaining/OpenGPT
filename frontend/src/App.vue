@@ -17,6 +17,7 @@
     <ChatView v-show="currentView === 'chat'" />
     <NoteView v-if="currentView === 'notes'" />
     <MemoryPanel />
+    <FileMemoryPanel />
     <ConfirmDialog />
     <PromptDialog />
   </div>
@@ -32,6 +33,7 @@ import Sidebar from '@/components/Sidebar.vue'
 import ChatView from '@/components/ChatView.vue'
 import NoteView from '@/views/NoteView.vue'
 import MemoryPanel from '@/components/MemoryPanel.vue'
+import FileMemoryPanel from '@/components/FileMemoryPanel.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import PromptDialog from '@/components/PromptDialog.vue'
 

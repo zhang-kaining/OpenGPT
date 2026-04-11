@@ -1,4 +1,5 @@
 import re
+import json
 import asyncio
 import logging
 import httpx
@@ -60,6 +61,153 @@ _BLOCK_FIELD_MAP = {
 
 _RE_ORDERED = re.compile(r"^(\d+)[.)]\s+(.*)")
 _RE_BULLET = re.compile(r"^[-*+]\s+(.*)")
+_RE_MD_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
+_RE_INLINE_CODE = re.compile(r"`([^`]+)`")
+_RE_EMPHASIS = re.compile(r"(\*\*|__|\*|_|~~)")
+_RE_FENCED_CODE_BLOCK = re.compile(r"```[\s\S]*?```")
+
+
+def _strip_inline_markdown(text: str) -> str:
+    cleaned = text or ""
+    cleaned = _RE_INLINE_CODE.sub(r"\1", cleaned)
+    cleaned = _RE_EMPHASIS.sub("", cleaned)
+    return cleaned.strip()
+
+
+def _normalize_inline_text(text: str) -> str:
+    cleaned = text or ""
+    cleaned = _RE_INLINE_CODE.sub(r"\1", cleaned)
+    cleaned = _RE_EMPHASIS.sub("", cleaned)
+    return cleaned
+
+
+def _make_post_text(text: str) -> dict:
+    return {"tag": "text", "text": text or " "}
+
+
+def _extract_message_title(content: str, default_title: str = "OpenGPT") -> str:
+    for raw_line in (content or "").splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith("# "):
+            return (_strip_inline_markdown(stripped[2:]) or default_title)[:60]
+        if stripped.startswith("## "):
+            return (_strip_inline_markdown(stripped[3:]) or default_title)[:60]
+        if stripped.startswith("### "):
+            return (_strip_inline_markdown(stripped[4:]) or default_title)[:60]
+    return default_title
+
+
+def _parse_post_inline_elements(text: str) -> list[dict]:
+    elements: list[dict] = []
+    cursor = 0
+    raw = text or ""
+    for match in _RE_MD_LINK.finditer(raw):
+        start, end = match.span()
+        if start > cursor:
+            prefix = _normalize_inline_text(raw[cursor:start])
+            if prefix:
+                elements.append(_make_post_text(prefix))
+        label = _strip_inline_markdown(match.group(1))
+        href = match.group(2).strip()
+        if label and href:
+            elements.append({"tag": "a", "text": label, "href": href})
+        cursor = end
+    if cursor < len(raw):
+        suffix = _normalize_inline_text(raw[cursor:])
+        if suffix:
+            elements.append(_make_post_text(suffix))
+    return elements or [_make_post_text(_strip_inline_markdown(raw) or " ")]
+
+
+def _markdown_to_post_content(content: str, default_title: str = "OpenGPT") -> str:
+    lines = (content or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    title = default_title
+    body: list[list[dict]] = []
+    in_code_block = False
+
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if stripped.startswith("```"):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            body.append([_make_post_text(f"    {_strip_inline_markdown(raw_line) or ' '}")])
+            continue
+        if not stripped:
+            continue
+        if stripped.startswith("# "):
+            heading = _strip_inline_markdown(stripped[2:].strip()) or default_title
+            if title == default_title:
+                title = heading[:60]
+                continue
+            body.append([_make_post_text(f"【{heading}】")])
+            continue
+        if stripped.startswith("## "):
+            heading = _strip_inline_markdown(stripped[3:].strip()) or " "
+            body.append([_make_post_text(f"【{heading}】")])
+            continue
+        if stripped.startswith("### "):
+            heading = _strip_inline_markdown(stripped[4:].strip()) or " "
+            body.append([_make_post_text(f"【{heading}】")])
+            continue
+
+        ordered = _RE_ORDERED.match(stripped)
+        if ordered:
+            body.append(_parse_post_inline_elements(f"{ordered.group(1)}. {ordered.group(2).strip()}"))
+            continue
+
+        bullet = _RE_BULLET.match(stripped)
+        if bullet:
+            body.append(_parse_post_inline_elements(f"• {bullet.group(1).strip()}"))
+            continue
+
+        if stripped.startswith(">"):
+            quote = _strip_inline_markdown(stripped.lstrip(">").strip()) or " "
+            body.append([_make_post_text(f"引用：{quote}")])
+            continue
+
+        body.append(_parse_post_inline_elements(stripped))
+
+    payload = {
+        "zh_cn": {
+            "title": title[:60] or default_title,
+            "content": body or [[_make_post_text(_strip_inline_markdown(content) or " ")]],
+        }
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _markdown_to_interactive_content(content: str, default_title: str = "OpenGPT") -> str:
+    title = _extract_message_title(content, default_title=default_title)
+    normalized = (content or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    body = normalized or " "
+    first_line, _, rest = body.partition("\n")
+    if first_line.strip().startswith(("# ", "## ", "### ")) and rest.strip():
+        body = rest.strip()
+
+    payload = {
+        "config": {
+            "wide_screen_mode": True,
+            "enable_forward": True,
+        },
+        "header": {
+            "template": "blue",
+            "title": {
+                "tag": "plain_text",
+                "content": title,
+            },
+        },
+        "elements": [
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": body,
+                },
+            }
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _classify_line(line: str) -> tuple[int, str]:
@@ -170,6 +318,10 @@ async def send_message(content: str, receive_id: str | None = None) -> dict:
         id_type = "open_id"
 
     token = await get_tenant_access_token()
+    post_content = _markdown_to_post_content(content)
+    interactive_content = _markdown_to_interactive_content(content)
+    msg_type = "interactive"
+    payload_content = interactive_content
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(
@@ -178,13 +330,28 @@ async def send_message(content: str, receive_id: str | None = None) -> dict:
             headers={"Authorization": f"Bearer {token}"},
             json={
                 "receive_id": target_id,
-                "msg_type": "text",
-                "content": '{"text":"' + content.replace('"', '\\"').replace('\n', '\\n') + '"}',
+                "msg_type": msg_type,
+                "content": payload_content,
             },
             timeout=15,
         )
         data = resp.json()
         if data.get("code") != 0:
+            logger.warning("飞书 interactive 发送失败，回退 post: %s", data.get("msg", "未知错误"))
+            resp = await client.post(
+                "https://open.feishu.cn/open-apis/im/v1/messages",
+                params={"receive_id_type": id_type},
+                headers={"Authorization": f"Bearer {token}"},
+                json={
+                    "receive_id": target_id,
+                    "msg_type": "post",
+                    "content": post_content,
+                },
+                timeout=15,
+            )
+            data = resp.json()
+            if data.get("code") == 0:
+                return {"success": True, "message_id": data.get("data", {}).get("message_id", "")}
             return {"success": False, "error": data.get("msg", "未知错误")}
         return {"success": True, "message_id": data.get("data", {}).get("message_id", "")}
 

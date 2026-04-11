@@ -66,3 +66,22 @@ export interface Note {
   created_at: string
   updated_at: string
 }
+
+export interface FileMemoryFile {
+  name: string
+  title: string
+  filename: string
+  max_lines: number
+  enabled_for_prompt: boolean
+  visible_in_frontend: boolean
+  description: string
+}
+
+export interface FileMemoryLine {
+  id: string
+  time: string
+  priority: string
+  kind: string
+  text: string
+  raw: string
+}

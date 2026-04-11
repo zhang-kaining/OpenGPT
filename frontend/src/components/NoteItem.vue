@@ -1,10 +1,11 @@
 <template>
   <div
     class="note-item"
-    :class="{ active: store.currentNoteId === note.id }"
-    :style="{ paddingLeft: `${14 + indent * 14}px` }"
+    :class="{ active: store.currentNoteId === note.id, nested: indent > 0 }"
+    :style="{ marginLeft: `${indent * 18}px` }"
     @click="store.selectNote(note.id)"
   >
+    <span v-if="indent > 0" class="note-branch" aria-hidden="true"></span>
     <span class="note-title" @dblclick.stop="onRename">{{ note.title }}</span>
     <div class="item-actions" @click.stop>
       <button class="action-btn" title="重命名" @click="onRename">
@@ -62,6 +63,7 @@ async function onDelete() {
 
 <style scoped>
 .note-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -70,6 +72,15 @@ async function onDelete() {
   cursor: pointer;
   transition: background 0.1s;
   min-height: 30px;
+}
+.note-item.nested::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 7px;
+  bottom: 7px;
+  width: 1px;
+  background: var(--border-light);
 }
 .note-item:hover {
   background: var(--bg-hover);
@@ -86,6 +97,13 @@ async function onDelete() {
   .note-item .item-actions {
     opacity: 1;
   }
+}
+
+.note-branch {
+  width: 10px;
+  height: 1px;
+  background: var(--border);
+  flex-shrink: 0;
 }
 
 .note-title {

@@ -26,6 +26,7 @@ from app.services import feishu as feishu_service
 from app.services import web_search as search_service
 from app.services.mcp_manager import get_mcp_manager
 from app.services.skill_manager import get_skill_manager
+from app.services.file_memory import render_prompt_section
 
 logger = logging.getLogger(__name__)
 
@@ -140,9 +141,15 @@ def build_system_prompt(memories: list[dict]) -> str:
         "回答时请使用 Markdown 格式，代码使用代码块，重要内容加粗。\n"
         "当你使用网页搜索结果时，请在回答中用 [数字] 标注引用来源，例如 [1]、[2]。\n"
     )
+    
+    # 注入文件型长期记忆（高置信、主控维护）
+    controller_mem_text = render_prompt_section("controller_memory")
+    if controller_mem_text:
+        base += f"\n{controller_mem_text}\n"
+
     if memories:
         mem_text = "\n".join(f"- {m['memory']}" for m in memories)
-        base += f"\n关于用户的记忆信息（请在回答时参考）：\n{mem_text}\n"
+        base += f"\n关于用户的近期记忆信息（请在回答时参考）：\n{mem_text}\n"
 
     # 注入技能摘要（轻量，只有 name + description）
     skill_summary = skill_mgr.get_summary_prompt()

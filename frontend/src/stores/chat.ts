@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed, reactive } from 'vue'
-import type { Conversation, ConversationFolder, Message, MemoryItem, Citation } from '@/types'
+import type { Conversation, ConversationFolder, Message, MemoryItem, Citation, FileMemoryLine } from '@/types'
 import * as api from '@/services/api'
 import type { LlmProviderOption } from '@/services/api'
 
@@ -15,10 +15,12 @@ export const useChatStore = defineStore('chat', () => {
   const currentConvId = ref<string | null>(null)
   const messages = ref<Message[]>([])
   const memories = ref<MemoryItem[]>([])
+  const fileMemoryLines = ref<FileMemoryLine[]>([])
   const isLoading = ref(false)
   const searchQuery = ref('')
   const enableSearch = ref(true)
   const showMemoryPanel = ref(false)
+  const showFileMemoryPanel = ref(false)
   const llmProviders = ref<LlmProviderOption[]>([])
   const selectedLlmProviderId = ref('')
   const inflightByConv = ref<Record<string, {
@@ -348,6 +350,30 @@ export const useChatStore = defineStore('chat', () => {
     memories.value = memories.value.filter(m => m.id !== id)
   }
 
+  async function loadFileMemoryLines(name: string) {
+    try {
+      fileMemoryLines.value = await api.getFileMemoryLines(name)
+    } catch (e) {
+      console.error('Failed to load file memory lines:', e)
+      fileMemoryLines.value = []
+    }
+  }
+
+  async function updateFileMemoryLine(name: string, id: string, text: string, priority: string, kind: string) {
+    await api.updateFileMemoryLine(name, id, text, priority, kind)
+    await loadFileMemoryLines(name)
+  }
+
+  async function deleteFileMemoryLine(name: string, id: string) {
+    await api.deleteFileMemoryLine(name, id)
+    await loadFileMemoryLines(name)
+  }
+
+  async function pinFileMemoryLine(name: string, id: string) {
+    await api.pinFileMemoryLine(name, id, 'P1')
+    await loadFileMemoryLines(name)
+  }
+
   return {
     conversations,
     folders,
@@ -360,10 +386,12 @@ export const useChatStore = defineStore('chat', () => {
     searchQuery,
     enableSearch,
     showMemoryPanel,
+    showFileMemoryPanel,
     llmProviders,
     selectedLlmProviderId,
     currentConversation,
     filteredConversations,
+    fileMemoryLines,
     loadConversations,
     loadFolders,
     refreshSidebar,
@@ -379,6 +407,10 @@ export const useChatStore = defineStore('chat', () => {
     stopGeneration,
     loadMemories,
     deleteMemory,
+    loadFileMemoryLines,
+    updateFileMemoryLine,
+    deleteFileMemoryLine,
+    pinFileMemoryLine,
     loadLlmCatalog,
     persistLlmProviderSelection,
   }

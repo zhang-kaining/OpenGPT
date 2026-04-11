@@ -3,7 +3,7 @@
  * 需在仓库根目录：frontend 已 build、backend 已有 .venv 与 .env。
  */
 const { app, BrowserWindow, dialog, nativeImage, ipcMain, nativeTheme, session } = require('electron')
-const { spawn } = require('child_process')
+const { spawn, spawnSync } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 const net = require('net')
@@ -19,6 +19,9 @@ if (!/\b127\.0\.0\.1\b/.test(process.env.NO_PROXY || '')) {
 /** @type {import('child_process').ChildProcess[]} */
 const children = []
 const devRootDir = path.resolve(__dirname, '..')
+const ORPHAN_API_PORTS = new Set([18789, 18000, 18001, 18002, 18010, 18080, 19000])
+const ORPHAN_GATEWAY_PORTS = new Set([8101, 18101, 18102, 18103, 19101])
+const ORPHAN_UVICORN_MARKERS = ['uvicorn app.main:app', 'uvicorn embedding_gateway.main:app']
 
 /** @type {import('electron').BrowserWindow | null} */
 let mainWin = null
@@ -36,6 +39,59 @@ function setupMainWindowClose(win) {
 
 function runtimeRootDir() {
   return app.isPackaged ? process.resourcesPath : devRootDir
+}
+
+function parseOrphanPort(command) {
+  const match = String(command || '').match(/--port\s+(\d+)/)
+  return match ? Number(match[1]) : null
+}
+
+function shouldCleanupOrphanProcess(command) {
+  const cmd = String(command || '')
+  if (!ORPHAN_UVICORN_MARKERS.some((marker) => cmd.includes(marker))) return false
+  const port = parseOrphanPort(cmd)
+  if (!port) return false
+  return ORPHAN_API_PORTS.has(port) || ORPHAN_GATEWAY_PORTS.has(port)
+}
+
+function cleanupStaleBackendProcesses() {
+  if (process.platform === 'win32') return
+  let stdout = ''
+  try {
+    const res = spawnSync('ps', ['-axo', 'pid=,ppid=,command='], { encoding: 'utf8' })
+    if (res.status !== 0) {
+      console.warn('OpenGPT: ps failed while checking stale backend processes')
+      return
+    }
+    stdout = res.stdout || ''
+  } catch (e) {
+    console.warn('OpenGPT: unable to inspect stale backend processes:', e)
+    return
+  }
+
+  const stalePids = []
+  for (const rawLine of stdout.split('\n')) {
+    const line = rawLine.trim()
+    if (!line) continue
+    const match = line.match(/^(\d+)\s+(\d+)\s+(.*)$/)
+    if (!match) continue
+    const pid = Number(match[1])
+    const ppid = Number(match[2])
+    const command = match[3]
+    if (!pid || pid === process.pid || ppid !== 1) continue
+    if (shouldCleanupOrphanProcess(command)) {
+      stalePids.push(pid)
+    }
+  }
+
+  for (const pid of stalePids) {
+    try {
+      process.kill(pid, 'SIGTERM')
+      console.warn(`OpenGPT: cleaned stale backend pid=${pid}`)
+    } catch (e) {
+      console.warn(`OpenGPT: failed to clean stale backend pid=${pid}:`, e)
+    }
+  }
 }
 
 function themeFilePath() {
@@ -425,6 +481,7 @@ async function verifySpaRoot(apiPort, timeoutMs = 30000) {
 }
 
 async function bootstrap() {
+  cleanupStaleBackendProcesses()
   const root = runtimeRootDir()
   const userDataRoot = userDataRootDir()
   const dataRoot = runtimeDataRoot()

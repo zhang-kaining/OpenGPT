@@ -3,7 +3,8 @@
     <!-- 文件夹行 -->
     <div
       class="folder-row"
-      :style="{ paddingLeft: `${8 + depth * 14}px` }"
+      :class="{ nested: depth > 0 }"
+      :style="{ marginLeft: `${depth * 18}px` }"
     >
       <button
         class="chevron"
@@ -101,13 +102,23 @@ async function onDeleteFolder() {
 
 <style scoped>
 .folder-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 3px;
-  padding: 5px 6px 5px 4px;
+  padding: 5px 6px 5px 6px;
   border-radius: 6px;
   transition: background 0.1s;
   min-height: 32px;
+}
+.folder-row.nested::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 7px;
+  bottom: 7px;
+  width: 1px;
+  background: var(--border-light);
 }
 .folder-row:hover {
   background: var(--bg-hover);

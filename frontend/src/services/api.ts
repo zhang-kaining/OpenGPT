@@ -1,4 +1,4 @@
-import type { Conversation, ConversationFolder, Message, MemoryItem, Citation, Note, NoteFolder } from '@/types'
+import type { Conversation, ConversationFolder, Message, MemoryItem, Citation, Note, NoteFolder, FileMemoryFile, FileMemoryLine } from '@/types'
 import { getAuthHeaders, clearAuth } from '@/composables/useAuth'
 
 const BASE = '/api'
@@ -341,6 +341,56 @@ export async function getMemories(): Promise<MemoryItem[]> {
 
 export async function deleteMemory(id: string) {
   await authFetch(`${BASE}/memory/${id}`, { method: 'DELETE' })
+}
+
+// ---- File Memory ----
+
+export async function listFileMemories(): Promise<FileMemoryFile[]> {
+  const res = await authFetch(`${BASE}/file-memory/files`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function getFileMemoryLines(name: string): Promise<FileMemoryLine[]> {
+  const res = await authFetch(`${BASE}/file-memory/${name}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function addFileMemoryLine(name: string, text: string, priority: string = 'P3', kind: string = 'fact') {
+  const res = await authFetch(`${BASE}/file-memory/${name}/lines`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, priority, kind })
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function updateFileMemoryLine(name: string, lineId: string, text: string, priority: string, kind: string) {
+  const res = await authFetch(`${BASE}/file-memory/${name}/lines/${lineId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, priority, kind })
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function deleteFileMemoryLine(name: string, lineId: string) {
+  const res = await authFetch(`${BASE}/file-memory/${name}/lines/${lineId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function pinFileMemoryLine(name: string, lineId: string, priority: string = 'P1') {
+  const res = await authFetch(`${BASE}/file-memory/${name}/lines/${lineId}/pin`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ priority })
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
 }
 
 // ---- Chat (SSE) ----
