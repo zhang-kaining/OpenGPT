@@ -2,11 +2,12 @@
  * 开发机试用：拉起 embedding 网关 + 主 API（含静态前端），再用 Electron 打开本地页面。
  * 需在仓库根目录：frontend 已 build、backend 已有 .venv 与 .env。
  */
-const { app, BrowserWindow, dialog, nativeImage, ipcMain, nativeTheme, session } = require('electron')
+const { app, BrowserWindow, dialog, nativeImage, ipcMain, nativeTheme, session, shell } = require('electron')
 const { spawn, spawnSync } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 const net = require('net')
+const { shouldOpenInExternalBrowser } = require('./url-policy.cjs')
 
 // 与 start.sh、Vite 代理默认一致；可用环境变量 OpenGPT_API_PORT / MYGPT_API_PORT 覆盖
 const DEFAULT_API_PORT = '18789'
@@ -173,19 +174,165 @@ function runCommand(cmd, args, opts = {}) {
 }
 
 async function findSystemPython() {
-  const candidates =
-    process.platform === 'win32'
-      ? ['python', 'py']
-      : ['/opt/homebrew/bin/python3', '/usr/local/bin/python3', '/usr/bin/python3', 'python3']
-  for (const cmd of candidates) {
+  const candidates = process.platform === 'win32'
+    ? ['python', 'py']
+    : await collectPythonCandidates()
+  const uniqueCandidates = [...new Set(candidates)]
+  const available = []
+  let fallback = null
+  for (const cmd of uniqueCandidates) {
     try {
-      await runCommand(cmd, ['-V'], {})
-      return cmd
+      const version = await getPythonVersion(cmd)
+      if (!fallback) {
+        fallback = { cmd, version }
+      }
+      available.push({ cmd, version })
     } catch (_) {
       /* try next */
     }
   }
-  return null
+  const supported = available
+    .filter((item) => isPythonVersionSupported(item.version))
+    .sort((a, b) => comparePythonVersions(b.version, a.version))
+  if (supported.length) {
+    return supported[0].cmd
+  }
+  return fallback ? fallback.cmd : null
+}
+
+async function collectPythonCandidates() {
+  const home = process.env.HOME || ''
+  const candidates = [
+    '/opt/homebrew/bin/python3',
+    '/usr/local/bin/python3',
+    '/usr/bin/python3',
+    '/Library/Frameworks/Python.framework/Versions/3.13/bin/python3',
+    '/Library/Frameworks/Python.framework/Versions/3.12/bin/python3',
+    '/Library/Frameworks/Python.framework/Versions/3.11/bin/python3',
+    '/Library/Frameworks/Python.framework/Versions/3.10/bin/python3',
+    home ? path.join(home, '.pyenv', 'shims', 'python3') : '',
+    home ? path.join(home, '.pyenv', 'shims', 'python') : '',
+    home ? path.join(home, '.local', 'bin', 'python3') : '',
+    home ? path.join(home, '.local', 'bin', 'python') : '',
+    'python3',
+    'python',
+  ].filter(Boolean)
+  const shellCandidates = await discoverPythonFromShell()
+  return [...candidates, ...shellCandidates]
+}
+
+async function discoverPythonFromShell() {
+  if (process.platform === 'win32') return []
+  const shells = ['/bin/zsh', '/bin/bash']
+  for (const shellPath of shells) {
+    if (!fs.existsSync(shellPath)) continue
+    try {
+      const output = await new Promise((resolve, reject) => {
+        const p = spawn(
+          shellPath,
+          ['-lc', 'command -v python3 2>/dev/null; command -v python 2>/dev/null'],
+          { stdio: ['ignore', 'pipe', 'pipe'] },
+        )
+        let stdout = ''
+        let stderr = ''
+        p.stdout.on('data', (buf) => {
+          stdout += String(buf)
+        })
+        p.stderr.on('data', (buf) => {
+          stderr += String(buf)
+        })
+        p.on('error', reject)
+        p.on('close', (code) => {
+          if (code !== 0 && !stdout.trim()) {
+            reject(new Error(stderr.trim() || `${shellPath} exited with code ${code}`))
+            return
+          }
+          resolve(stdout)
+        })
+      })
+      const lines = String(output)
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+      if (lines.length) return lines
+    } catch (_) {
+      /* try next shell */
+    }
+  }
+  return []
+}
+
+async function getPythonVersion(cmd) {
+  return await new Promise((resolve, reject) => {
+    const p = spawn(cmd, ['-c', 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    p.stdout.on('data', (buf) => {
+      stdout += String(buf)
+    })
+    p.stderr.on('data', (buf) => {
+      stderr += String(buf)
+    })
+    p.on('error', reject)
+    p.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || `${cmd} exited with code ${code}`))
+        return
+      }
+      resolve((stdout || '').trim())
+    })
+  })
+}
+
+function isPythonVersionSupported(versionText) {
+  const match = String(versionText || '').match(/^(\d+)\.(\d+)/)
+  if (!match) return false
+  const major = Number(match[1])
+  const minor = Number(match[2])
+  return major > 3 || (major === 3 && minor >= 10)
+}
+
+function comparePythonVersions(a, b) {
+  const parse = (text) => {
+    const match = String(text || '').match(/^(\d+)\.(\d+)/)
+    if (!match) return [0, 0]
+    return [Number(match[1]), Number(match[2])]
+  }
+  const [aMajor, aMinor] = parse(a)
+  const [bMajor, bMinor] = parse(b)
+  if (aMajor !== bMajor) return aMajor - bMajor
+  return aMinor - bMinor
+}
+
+function removeRuntimeVenv(dataRoot, writeLine) {
+  const venvRoot = runtimeVenvRoot(dataRoot)
+  try {
+    fs.rmSync(venvRoot, { recursive: true, force: true })
+    if (writeLine) writeLine(`removed broken runtime venv: ${venvRoot}`)
+  } catch (e) {
+    if (writeLine) writeLine(`failed to remove broken runtime venv: ${String(e && e.message ? e.message : e)}`)
+    throw e
+  }
+}
+
+async function isRuntimeVenvUsable(dataRoot, writeLine) {
+  const py = runtimeVenvPython(dataRoot)
+  if (!fs.existsSync(py)) return false
+  try {
+    await runCommand(
+      py,
+      ['-c', 'import uvicorn, fastapi, langchain_mcp_adapters'],
+      { writeLine },
+    )
+    return true
+  } catch (e) {
+    if (writeLine) {
+      writeLine(`runtime venv validation failed: ${String(e && e.message ? e.message : e)}`)
+    }
+    return false
+  }
 }
 
 function buildLoadingHtml(opts = {}) {
@@ -258,6 +405,27 @@ function createShellWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
     },
   })
+
+  const openExternalIfNeeded = ({ url }) => {
+    if (!shouldOpenInExternalBrowser(url, win.webContents.getURL())) {
+      return { action: 'allow' }
+    }
+
+    shell.openExternal(url).catch((err) => {
+      console.warn('OpenGPT: failed to open external link:', err)
+    })
+    return { action: 'deny' }
+  }
+
+  win.webContents.setWindowOpenHandler(openExternalIfNeeded)
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!shouldOpenInExternalBrowser(url, win.webContents.getURL())) return
+    event.preventDefault()
+    shell.openExternal(url).catch((err) => {
+      console.warn('OpenGPT: failed to open external navigation:', err)
+    })
+  })
+
   return win
 }
 
@@ -310,18 +478,43 @@ async function loadWindowUrlWithRetry(win, url, opts = {}) {
 
 async function ensureRuntimeVenv(backendRoot, dataRoot, setupLogPath) {
   const py = runtimeVenvPython(dataRoot)
-  if (fs.existsSync(py)) return py
   const write = createLineWriter(setupLogPath)
   write(`--- ${new Date().toISOString()} setup runtime venv ---`)
+
+  if (await isRuntimeVenvUsable(dataRoot, write)) {
+    write('reuse existing runtime venv')
+    return py
+  }
+  if (fs.existsSync(runtimeVenvRoot(dataRoot))) {
+    removeRuntimeVenv(dataRoot, write)
+  }
+
   const sysPy = await findSystemPython()
   if (!sysPy) {
     throw new Error('未找到系统 Python3，无法自动创建运行环境')
   }
+  const sysPyVersion = await getPythonVersion(sysPy)
+  write(`detected system python: ${sysPy} (${sysPyVersion})`)
+  if (!isPythonVersionSupported(sysPyVersion)) {
+    throw new Error(
+      `首次启动需要 Python 3.10 或更高版本；当前检测到 ${sysPyVersion}，无法安装必需依赖 langchain-mcp-adapters。请先升级 Python 后重新启动 OpenGPT。`,
+    )
+  }
   const req = path.join(backendRoot, 'requirements.txt')
   const venvRoot = runtimeVenvRoot(dataRoot)
-  await runCommand(sysPy, ['-m', 'venv', venvRoot], { writeLine: write })
-  await runCommand(runtimeVenvPython(dataRoot), ['-m', 'pip', 'install', '-r', req], { writeLine: write })
-  return runtimeVenvPython(dataRoot)
+  try {
+    await runCommand(sysPy, ['-m', 'venv', venvRoot], { writeLine: write })
+    await runCommand(runtimeVenvPython(dataRoot), ['-m', 'pip', 'install', '-r', req], { writeLine: write })
+    if (!(await isRuntimeVenvUsable(dataRoot, write))) {
+      throw new Error('运行环境创建后校验失败：缺少 uvicorn、fastapi 或 langchain_mcp_adapters')
+    }
+    return runtimeVenvPython(dataRoot)
+  } catch (e) {
+    if (fs.existsSync(runtimeVenvRoot(dataRoot))) {
+      removeRuntimeVenv(dataRoot, write)
+    }
+    throw e
+  }
 }
 
 function spawnManaged(cmd, args, opts) {
@@ -497,32 +690,30 @@ async function bootstrap() {
   /** @type {import('electron').BrowserWindow | null} */
   let win = null
 
-  if (!fs.existsSync(py)) {
-    if (app.isPackaged) {
-      const firstTimeRuntime = !fs.existsSync(runtimeVenvPython(dataRoot))
-      if (firstTimeRuntime) {
-        win = await createLoadingWindow(true)
-      }
-      try {
-        py = await ensureRuntimeVenv(backendRoot, dataRoot, setupLog)
-      } catch (e) {
-        if (win && !win.isDestroyed()) win.close()
-        await dialog.showErrorBox(
-          'OpenGPT',
-          `首次启动需初始化 Python 依赖，失败：${String(e && e.message ? e.message : e)}\n` +
-            `请查看日志：${setupLog}`,
-        )
-        app.quit()
-        return
-      }
-    } else {
+  if (app.isPackaged) {
+    const hasRuntimePython = fs.existsSync(runtimeVenvPython(dataRoot))
+    if (!hasRuntimePython) {
+      win = await createLoadingWindow(true)
+    }
+    try {
+      py = await ensureRuntimeVenv(backendRoot, dataRoot, setupLog)
+    } catch (e) {
+      if (win && !win.isDestroyed()) win.close()
       await dialog.showErrorBox(
         'OpenGPT',
-        '未找到 backend/.venv。\n请在 backend 目录执行：python3 -m venv .venv && .venv/bin/pip install -r requirements.txt',
+        `首次启动需初始化 Python 依赖，失败：${String(e && e.message ? e.message : e)}\n` +
+          `请查看日志：${setupLog}`,
       )
       app.quit()
       return
     }
+  } else if (!fs.existsSync(py)) {
+    await dialog.showErrorBox(
+      'OpenGPT',
+      '未找到 backend/.venv。\n请在 backend 目录执行：python3 -m venv .venv && .venv/bin/pip install -r requirements.txt',
+    )
+    app.quit()
+    return
   }
   if (!fs.existsSync(path.join(backendRoot, '.env'))) {
     if (win && !win.isDestroyed()) win.close()
@@ -600,6 +791,7 @@ async function bootstrap() {
       DB_PATH: path.join(dataRoot, 'chat.db'),
       SETTINGS_DB_PATH: path.join(dataRoot, 'settings.db'),
       MCP_CONFIG_PATH: path.join(dataRoot, 'mcp.json'),
+      FILE_MEMORY_DIR: path.join(dataRoot, 'file_memories'),
       MEM0_DIR: path.join(dataRoot, 'mem0'),
       MEMORY_LEGACY_PATH: path.join(dataRoot, 'qdrant'),
       PYTHONDONTWRITEBYTECODE: '1',

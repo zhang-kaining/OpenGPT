@@ -44,7 +44,7 @@
         class="conv-item"
         :class="{ active: conv.id === store.currentConvId }"
         :style="{ paddingLeft: `${18 + (depth + 1) * 14}px` }"
-        @click="store.selectConversation(conv.id)"
+        @click="openConversation(conv.id)"
       >
         <span v-if="editingId !== conv.id" class="conv-title">{{ conv.title }}</span>
         <input
@@ -76,7 +76,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, inject } from 'vue'
+import type { Ref } from 'vue'
 import type { Conversation } from '@/types'
 import { useChatStore } from '@/stores/chat'
 import SidebarFolderBranch from './SidebarFolderBranch.vue'
@@ -88,6 +89,7 @@ const props = withDefaults(
 )
 
 const store = useChatStore()
+const currentView = inject<Ref<string>>('currentView', ref('chat'))
 
 const sortedChildFolders = computed(() =>
   store.folders
@@ -97,6 +99,11 @@ const sortedChildFolders = computed(() =>
 
 function convsInFolder(folderId: string): Conversation[] {
   return store.filteredConversations.filter(c => c.folder_id === folderId)
+}
+
+async function openConversation(id: string) {
+  await store.selectConversation(id)
+  currentView.value = 'chat'
 }
 
 const editingId = ref<string | null>(null)

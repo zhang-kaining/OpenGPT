@@ -40,7 +40,7 @@ class Settings(BaseModel):
 
     tavily_api_key: str = ""
 
-    embedding_provider: str = "azure"
+    embedding_provider: str = ""
     embedding_api_key: str = ""
     embedding_base_url: str = ""
     embedding_model: str = ""

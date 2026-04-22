@@ -359,6 +359,10 @@ function openImage(src: string) {
     padding-top: 0;
 }
 
+.assistant-content :deep(.msg-structured-content > :first-child) {
+    margin-top: 0;
+}
+
 .searching-indicator {
     display: inline-flex;
     align-items: center;

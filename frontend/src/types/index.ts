@@ -67,6 +67,14 @@ export interface Note {
   updated_at: string
 }
 
+export interface NoteImageAsset {
+  id: string
+  filename: string
+  content_type: string
+  size: number
+  url: string
+}
+
 export interface FileMemoryFile {
   name: string
   title: string

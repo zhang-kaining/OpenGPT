@@ -1,4 +1,4 @@
-import type { Conversation, ConversationFolder, Message, MemoryItem, Citation, Note, NoteFolder, FileMemoryFile, FileMemoryLine } from '@/types'
+import type { Conversation, ConversationFolder, Message, MemoryItem, Citation, Note, NoteFolder, NoteImageAsset, FileMemoryFile, FileMemoryLine } from '@/types'
 import { getAuthHeaders, clearAuth } from '@/composables/useAuth'
 
 const BASE = '/api'
@@ -286,6 +286,20 @@ export async function deleteNote(id: string) {
   await authFetch(`${BASE}/notes/${id}`, { method: 'DELETE' })
 }
 
+export async function uploadNoteImage(noteId: string, file: File): Promise<NoteImageAsset> {
+  const formData = new FormData()
+  formData.append('image', file)
+  const res = await authFetch(`${BASE}/notes/${noteId}/images`, {
+    method: 'POST',
+    body: formData,
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
 export interface AiRefineCallbacks {
   onToken?: (token: string) => void
   onDone?: () => void
@@ -410,6 +424,7 @@ export async function sendMessage(
   conversationId: string | null,
   enableSearch: boolean,
   callbacks: ChatCallbacks,
+  requestId: string,
   signal?: AbortSignal,
   images?: string[],
   folderId?: string | null,
@@ -428,6 +443,7 @@ export async function sendMessage(
       enable_search: enableSearch,
       images: images?.length ? images : undefined,
       llm_provider_id: llmProviderId || undefined,
+      request_id: requestId,
     }),
     signal,
   })
@@ -446,49 +462,73 @@ export async function sendMessage(
   const reader = res.body!.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  const abortError = () => new DOMException('The operation was aborted.', 'AbortError')
+  const onAbort = () => {
+    void reader.cancel().catch(() => {})
+  }
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
+  if (signal?.aborted) {
+    await reader.cancel().catch(() => {})
+    throw abortError()
+  }
+  signal?.addEventListener('abort', onAbort, { once: true })
 
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''
+  try {
+    while (true) {
+      if (signal?.aborted) throw abortError()
+      const { done, value } = await reader.read()
+      if (done) break
 
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue
-      const raw = line.slice(6).trim()
-      if (raw === '[DONE]') return
-      if (!raw) continue
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
 
-      try {
-        const event = JSON.parse(raw)
-        switch (event.type) {
-          case 'conv_id':
-            callbacks.onConvId?.(event.conv_id)
-            break
-          case 'token':
-            callbacks.onToken?.(event.content)
-            break
-          case 'searching':
-            callbacks.onSearching?.(event.query)
-            break
-          case 'search_results':
-            callbacks.onSearchResults?.(event.results)
-            break
-          case 'tool_call':
-            callbacks.onToolCall?.(event.name, event.status)
-            break
-          case 'done':
-            callbacks.onDone?.(event.citations ?? [], event.usage)
-            break
-          case 'error':
-            callbacks.onError?.(event.message)
-            break
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const raw = line.slice(6).trim()
+        if (raw === '[DONE]') return
+        if (!raw) continue
+
+        try {
+          const event = JSON.parse(raw)
+          switch (event.type) {
+            case 'conv_id':
+              callbacks.onConvId?.(event.conv_id)
+              break
+            case 'token':
+              callbacks.onToken?.(event.content)
+              break
+            case 'searching':
+              callbacks.onSearching?.(event.query)
+              break
+            case 'search_results':
+              callbacks.onSearchResults?.(event.results)
+              break
+            case 'tool_call':
+              callbacks.onToolCall?.(event.name, event.status)
+              break
+            case 'done':
+              callbacks.onDone?.(event.citations ?? [], event.usage)
+              break
+            case 'error':
+              callbacks.onError?.(event.message)
+              break
+          }
+        } catch {
+          // ignore parse errors
         }
-      } catch {
-        // ignore parse errors
       }
     }
+  } finally {
+    signal?.removeEventListener('abort', onAbort)
+    reader.releaseLock()
   }
+}
+
+export async function cancelChatRequest(requestId: string) {
+  await authFetch(`${BASE}/chat/cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request_id: requestId }),
+  })
 }

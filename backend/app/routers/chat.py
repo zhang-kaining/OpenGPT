@@ -2,7 +2,7 @@ import asyncio
 import json
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
-from app.models.schemas import MessageCreate
+from app.models.schemas import MessageCreate, ChatCancelRequest
 from app.config import get_settings
 from app.services import conversation as conv_service
 from app.services import memory as mem_service
@@ -10,11 +10,24 @@ from app.services import azure_openai as oai_service
 from app.deps import get_current_user
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+ACTIVE_CHAT_STREAMS: dict[str, dict] = {}
 
 
 def sse(data: str) -> str:
     """格式化为标准 SSE 行"""
     return f"data: {data}\n\n"
+
+
+@router.post("/cancel")
+async def cancel_chat(body: ChatCancelRequest, user: dict = Depends(get_current_user)):
+    entry = ACTIVE_CHAT_STREAMS.get(body.request_id)
+    if not entry or entry.get("user_id") != user["id"]:
+        return {"ok": False}
+
+    task = entry.get("task")
+    if task and not task.done():
+        task.cancel()
+    return {"ok": True}
 
 
 @router.post("")
@@ -64,11 +77,18 @@ async def chat(request: Request, body: MessageCreate, user: dict = Depends(get_c
             last_user["content"] = content_parts
 
     memories = mem_service.search_memories(body.content, user_id)
+    stream_task = asyncio.current_task()
+    if body.request_id and stream_task:
+        ACTIVE_CHAT_STREAMS[body.request_id] = {
+            "task": stream_task,
+            "user_id": user_id,
+        }
 
     async def event_generator():
         full_response = ""
         citations = []
         disconnected = False
+        cancelled = False
 
         try:
             yield sse(json.dumps({"type": "conv_id", "conv_id": conv_id}, ensure_ascii=False))
@@ -97,21 +117,25 @@ async def chat(request: Request, body: MessageCreate, user: dict = Depends(get_c
                     yield sse(json.dumps(event, ensure_ascii=False))
                 elif event["type"] == "error":
                     yield sse(json.dumps(event, ensure_ascii=False))
+        except asyncio.CancelledError:
+            cancelled = True
         finally:
+            if body.request_id:
+                ACTIVE_CHAT_STREAMS.pop(body.request_id, None)
             if full_response:
                 await conv_service.add_message(conv_id, "assistant", full_response, citations or None)
                 all_msgs = await conv_service.get_messages(conv_id)
                 if len(all_msgs) == 2:
                     title = body.content[:30].replace("\n", " ")
                     await conv_service.update_conversation_title(conv_id, title)
-                if not disconnected:
+                if not disconnected and not cancelled:
                     mem_service.add_memories(
                         [{"role": "user", "content": body.content},
                          {"role": "assistant", "content": full_response}],
                         user_id
                     )
 
-            if not disconnected:
+            if not disconnected and not cancelled:
                 yield sse("[DONE]")
 
     return StreamingResponse(

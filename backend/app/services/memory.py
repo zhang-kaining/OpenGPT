@@ -142,7 +142,7 @@ def _migrate_embedding_providers_if_needed(s) -> list[dict]:
     return [item]
 
 
-def _pick_embedding_provider(s) -> dict:
+def _pick_embedding_provider(s) -> dict | None:
     provs = _migrate_embedding_providers_if_needed(s)
     pid = (s.active_embedding_provider_id or "").strip()
     if pid:
@@ -154,15 +154,7 @@ def _pick_embedding_provider(s) -> dict:
             kind = str(p.get("kind", "")).strip().lower()
             if kind in ("openai", "azure"):
                 return p
-    # 兜底仍可用：无配置时回退到默认 azure
-    return {
-        "id": "azure-default",
-        "name": "Azure Embedding",
-        "kind": "azure",
-        "deployment": s.azure_openai_embedding_deployment or "text-embedding-3-small",
-        "endpoint": s.azure_openai_endpoint,
-        "api_version": s.azure_openai_api_version,
-    }
+    return None
 
 
 def _normalized_dim_tag(provider_cfg: dict) -> str:
@@ -294,6 +286,8 @@ def _build_config_with(provider_kind: str, model: str, provider_cfg: dict, colle
 def _build_config() -> dict:
     s = get_settings()
     p = _pick_embedding_provider(s)
+    if not p:
+        raise ValueError("尚未配置任何向量模型提供方，memory 功能将保持关闭。")
     kind = str(p.get("kind", "")).strip().lower()
     if kind not in ("openai", "azure"):
         kind = "azure"
@@ -314,6 +308,8 @@ def _build_config() -> dict:
 def _build_legacy_config() -> dict:
     s = get_settings()
     p = _pick_embedding_provider(s)
+    if not p:
+        raise ValueError("尚未配置任何向量模型提供方，legacy memory 功能将保持关闭。")
     kind = str(p.get("kind", "")).strip().lower()
     if kind not in ("openai", "azure"):
         kind = "azure"
@@ -325,12 +321,16 @@ def _build_legacy_config() -> dict:
     return _build_config_with(kind, legacy_model, p, legacy_collection, legacy_path, s)
 
 
-def get_memory() -> Memory:
+def get_memory() -> Memory | None:
     global _memory
     if _memory is None:
-        config = _build_config()
-        logger.info("mem0 初始化，active embedding provider: %s", get_settings().active_embedding_provider_id or "(auto)")
-        _memory = Memory.from_config(config)
+        try:
+            config = _build_config()
+            logger.info("mem0 初始化，active embedding provider: %s", get_settings().active_embedding_provider_id or "(auto)")
+            _memory = Memory.from_config(config)
+        except Exception as e:
+            logger.warning("memory 初始化失败，已降级禁用: %s", e)
+            return None
     return _memory
 
 
@@ -560,7 +560,11 @@ def search_memories(query: str, user_id: str, limit: int = 5) -> list[dict]:
 def add_memories(messages: list[dict], user_id: str) -> None:
     try:
         logger.info("memory_add primary user_id=%s message_count=%d", user_id, len(messages))
-        result = get_memory().add(messages, user_id=user_id)
+        mem = get_memory()
+        if mem is None:
+            logger.info("memory_add skipped: no active embedding provider")
+            return
+        result = mem.add(messages, user_id=user_id)
         # 将 mem0 抽取结果同步到本地 user_memories，避免重启后 get_all 波动
         _upsert_memory_rows(user_id, _as_items(result))
         logger.info("memory_add primary success user_id=%s", user_id)

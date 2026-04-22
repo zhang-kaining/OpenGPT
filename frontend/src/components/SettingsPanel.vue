@@ -28,6 +28,23 @@
         <!-- General Tab -->
         <div v-if="activeTab === 'general'" class="tab-content">
           <div class="setting-group">
+            <div class="setting-label">账号</div>
+            <div class="account-card">
+              <div class="account-main">
+                <div class="account-avatar">
+                  <img :src="userAvatar" alt="account-avatar" />
+                </div>
+                <div class="account-meta">
+                  <div class="account-name">{{ currentUser?.display_name || '未设置昵称' }}</div>
+                  <div class="account-sub">{{ currentUser?.username || '未登录用户' }}</div>
+                </div>
+              </div>
+              <button class="btn-secondary account-logout-btn" @click="handleLogout">
+                退出登录
+              </button>
+            </div>
+          </div>
+          <div class="setting-group">
             <div class="setting-label">外观</div>
             <div class="theme-options">
               <button
@@ -508,6 +525,7 @@ import { avatarPresets, userAvatar, setUserAvatar, uploadUserAvatar } from '@/co
 import { messageRenderMode, setMessageRenderMode } from '@/composables/useMessageRenderMode'
 import type { MessageRenderMode } from '@/composables/useMessageRenderMode'
 import { openConfirm } from '@/composables/useConfirmDialog'
+import { currentUser, clearAuth } from '@/composables/useAuth'
 import * as api from '@/services/api'
 
 const props = defineProps<{ visible: boolean }>()
@@ -578,6 +596,18 @@ const loadingFeishuBindStatus = ref(false)
 const loadingFeishuBindCode = ref(false)
 const feishuBindMsg = ref('')
 const feishuBindMsgOk = ref(false)
+
+async function handleLogout() {
+  const ok = await openConfirm({
+    title: '退出登录',
+    message: '确定要退出当前账号吗？',
+    danger: false,
+    confirmText: '退出',
+  })
+  if (!ok) return
+  clearAuth()
+  window.location.reload()
+}
 
 async function loadSkills() {
   loadingSkills.value = true
@@ -2006,6 +2036,62 @@ watch(activeTab, async (tab: string) => {
   font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
+}
+.account-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-hover);
+}
+.account-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.account-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-light);
+  border: 1px solid rgba(224, 149, 74, 0.2);
+}
+.account-avatar img {
+  width: 84%;
+  height: 84%;
+  object-fit: contain;
+  display: block;
+}
+.account-meta {
+  min-width: 0;
+}
+.account-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.account-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.account-logout-btn {
+  flex-shrink: 0;
 }
 .theme-options {
   display: flex;

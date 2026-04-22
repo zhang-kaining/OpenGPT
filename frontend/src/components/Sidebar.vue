@@ -59,7 +59,7 @@
           :key="conv.id"
           class="conv-item"
           :class="{ active: conv.id === store.currentConvId }"
-          @click="store.selectConversation(conv.id)"
+          @click="openConversation(conv.id)"
         >
           <span v-if="editingId !== conv.id" class="conv-title">{{ conv.title }}</span>
           <input
@@ -100,7 +100,7 @@
           :key="conv.id"
           class="conv-item"
           :class="{ active: conv.id === store.currentConvId }"
-          @click="store.selectConversation(conv.id)"
+          @click="openConversation(conv.id)"
         >
           <span v-if="editingId !== conv.id" class="conv-title">{{ conv.title }}</span>
           <input
@@ -170,11 +170,10 @@
 
     <!-- 底部用户区域 -->
     <div class="sidebar-footer">
-      <button class="footer-user-btn" @click="openMemory">
+      <button class="footer-user-btn" title="记忆面板" @click="openMemory">
         <div class="user-avatar">
           <img :src="userAvatar" alt="avatar" class="avatar-img" />
         </div>
-        <span class="user-name">{{ currentUser?.display_name || currentUser?.username || '用户' }}</span>
       </button>
       <button
         class="icon-btn settings-btn"
@@ -182,11 +181,9 @@
         @click="openFileMemory"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-          <polyline points="14 2 14 8 20 8"></polyline>
-          <line x1="16" y1="13" x2="8" y2="13"></line>
-          <line x1="16" y1="17" x2="8" y2="17"></line>
-          <polyline points="10 9 9 9 8 9"></polyline>
+          <ellipse cx="12" cy="5" rx="7" ry="3"></ellipse>
+          <path d="M5 5v6c0 1.66 3.13 3 7 3s7-1.34 7-3V5"></path>
+          <path d="M5 11v6c0 1.66 3.13 3 7 3s7-1.34 7-3v-6"></path>
         </svg>
       </button>
       <button
@@ -201,12 +198,6 @@
           <line x1="16" y1="13" x2="8" y2="13"/>
           <line x1="16" y1="17" x2="8" y2="17"/>
           <polyline points="10 9 9 9 8 9"/>
-        </svg>
-      </button>
-      <button class="icon-btn settings-btn" title="退出登录" @click="logout">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-          <polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
         </svg>
       </button>
       <button class="icon-btn settings-btn" title="设置" @click="showSettings = true">
@@ -225,7 +216,6 @@
 import { ref, computed, nextTick, watch, inject } from 'vue'
 import type { Ref } from 'vue'
 import { useChatStore } from '@/stores/chat'
-import { currentUser, clearAuth } from '@/composables/useAuth'
 import { userAvatar } from '@/composables/useAvatar'
 import type { Conversation } from '@/types'
 import SettingsPanel from './SettingsPanel.vue'
@@ -253,18 +243,6 @@ async function newRootFolder() {
   }
 }
 
-async function logout() {
-  const ok = await openConfirm({
-    title: '退出登录',
-    message: '确定要退出当前账号吗？',
-    danger: false,
-    confirmText: '退出',
-  })
-  if (ok) {
-    clearAuth()
-    window.location.reload()
-  }
-}
 const editingId = ref<string | null>(null)
 const editTitle = ref('')
 const editInput = ref<HTMLInputElement | null>(null)
@@ -275,6 +253,11 @@ watch(showSearch, (val) => {
   if (val) nextTick(() => searchInputRef.value?.focus())
   else store.searchQuery = ''
 })
+
+async function openConversation(id: string) {
+  await store.selectConversation(id)
+  currentView.value = 'chat'
+}
 
 function startEdit(conv: Conversation) {
   editingId.value = conv.id
@@ -581,22 +564,26 @@ function openFileMemory() {
 }
 
 .footer-user-btn {
-  flex: 1;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 7px 8px;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  padding: 0;
   background: none;
   border: none;
-  border-radius: 8px;
+  border-radius: 12px;
   cursor: pointer;
   transition: background 0.12s;
-  min-width: 0;
+  flex-shrink: 0;
 }
 .footer-user-btn:hover { background: var(--bg-hover); }
 
 .settings-btn {
   flex-shrink: 0;
+}
+.footer-user-btn + .settings-btn {
+  margin-left: auto;
 }
 .settings-btn.view-active {
   color: var(--accent);
@@ -623,12 +610,4 @@ function openFileMemory() {
   object-fit: contain; /* contain = 完整显示图片，不裁剪 */
 }
 
-.user-name {
-  font-size: 13.5px;
-  color: var(--text-primary);
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 </style>

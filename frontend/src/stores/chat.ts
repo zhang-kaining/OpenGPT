@@ -25,6 +25,7 @@ export const useChatStore = defineStore('chat', () => {
   const selectedLlmProviderId = ref('')
   const inflightByConv = ref<Record<string, {
     abort: AbortController
+    requestId: string
     userMsg: Message
     aiMsg: Message
   }>>({})
@@ -46,7 +47,26 @@ export const useChatStore = defineStore('chat', () => {
     if (loading) next.add(convId)
     else next.delete(convId)
     loadingConvIds.value = next
-    isLoading.value = !!(currentConvId.value && next.has(currentConvId.value))
+    isLoading.value = next.size > 0
+  }
+
+  function getActiveInflightEntry() {
+    const currentId = currentConvId.value
+    if (currentId && inflightByConv.value[currentId]) {
+      return [currentId, inflightByConv.value[currentId]] as const
+    }
+
+    const entries = Object.entries(inflightByConv.value)
+    if (entries.length === 0) return null
+
+    if (currentId) {
+      const matched = entries.find(([, inflight]) =>
+        inflight.userMsg.conversation_id === currentId || inflight.aiMsg.conversation_id === currentId,
+      )
+      if (matched) return matched
+    }
+
+    return entries[0] as [string, (typeof inflightByConv.value)[string]]
   }
 
   function appendInflightIfNeeded(convId: string) {
@@ -203,7 +223,8 @@ export const useChatStore = defineStore('chat', () => {
     messages.value.push(aiMsg)
     const pendingKey = currentConvId.value || nextTempId('pending')
     const abort = new AbortController()
-    inflightByConv.value[pendingKey] = { abort, userMsg, aiMsg }
+    const requestId = nextTempId('chat-request')
+    inflightByConv.value[pendingKey] = { abort, requestId, userMsg, aiMsg }
     setConvLoading(pendingKey, true)
 
     try {
@@ -277,6 +298,7 @@ export const useChatStore = defineStore('chat', () => {
             setConvLoading(convId, false)
           },
         },
+        requestId,
         abort.signal,
         images,
         pendingFolderId.value,
@@ -295,15 +317,15 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function stopGeneration() {
-    if (!currentConvId.value) return
-    const inflight = inflightByConv.value[currentConvId.value]
-    if (inflight) {
-      inflight.abort.abort()
-      inflight.aiMsg.streaming = false
-      inflight.aiMsg.searching = false
-      delete inflightByConv.value[currentConvId.value]
-      setConvLoading(currentConvId.value, false)
-    }
+    const active = getActiveInflightEntry()
+    if (!active) return
+    const [inflightKey, inflight] = active
+    void api.cancelChatRequest(inflight.requestId).catch(() => {})
+    inflight.abort.abort()
+    inflight.aiMsg.streaming = false
+    inflight.aiMsg.searching = false
+    delete inflightByConv.value[inflightKey]
+    setConvLoading(inflightKey, false)
   }
 
   async function loadLlmCatalog() {

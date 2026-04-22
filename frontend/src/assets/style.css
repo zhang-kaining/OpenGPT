@@ -131,7 +131,11 @@ html, body {
 }
 
 /* Markdown styles */
-.markdown-body { line-height: 1.8; font-size: 1rem; }
+.markdown-body {
+  line-height: 1.8;
+  font-size: 1rem;
+  color: var(--text-primary);
+}
 .markdown-body h1, .markdown-body h2, .markdown-body h3,
 .markdown-body h4, .markdown-body h5, .markdown-body h6 {
   margin: 1.3em 0 0.55em;
@@ -171,9 +175,9 @@ html, body {
 .markdown-body blockquote {
   border-left: 2px solid var(--accent);
   padding-left: 1em;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   margin: 0.8em 0;
-  opacity: 0.9;
+  opacity: 0.96;
 }
 .markdown-body code {
   background: var(--code-inline-bg);
