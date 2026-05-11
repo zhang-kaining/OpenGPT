@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from mem0 import Memory
 from app.config import get_settings
-from app.services import azure_openai as oai_service
+from app.services.llm_factory import resolve_llm
 from app.services import runtime_config as rc
 
 logger = logging.getLogger(__name__)
@@ -202,7 +202,7 @@ def _build_mem0_llm_config(s) -> dict:
     mem0 的事实抽取 LLM 与对话模型保持一致，避免只配置了 provider
     但未填全局 Azure 时初始化失败。
     """
-    kind, model_name, extra = oai_service.resolve_llm(s)
+    kind, model_name, extra = resolve_llm(s)
     if kind == "openai":
         cfg: dict[str, object] = {
             "model": model_name,

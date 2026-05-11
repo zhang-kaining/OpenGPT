@@ -39,11 +39,11 @@ async def _process_im_message_event(data) -> None:
     2) 调用现有后端对话链路生成回复
     3) 回发到原会话
     """
-    from app.services import azure_openai as oai_service
     from app.services import conversation as conv_service
     from app.services import feishu_binding as feishu_binding_service
     from app.services import feishu as feishu_service
     from app.services import memory as mem_service
+    from app.services.azure_openai import stream_chat
 
     if not hasattr(data, "event"):
         return
@@ -119,7 +119,7 @@ async def _process_im_message_event(data) -> None:
 
     reply = ""
     citations = []
-    async for ev in oai_service.stream_chat(messages, memories, enable_search=False):
+    async for ev in stream_chat(messages, memories, enable_search=False):
         if ev.get("type") == "token":
             reply += ev.get("content", "")
         elif ev.get("type") == "done":

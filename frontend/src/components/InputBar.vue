@@ -75,28 +75,6 @@
                         class="hidden-file-input"
                         @change="handleFileChange"
                     />
-                    <!-- 搜索开关 -->
-                    <button
-                        class="tool-btn search-toggle"
-                        :class="{ active: store.enableSearch }"
-                        :title="
-                            store.enableSearch ? '关闭网页搜索' : '开启网页搜索'
-                        "
-                        @click="store.enableSearch = !store.enableSearch"
-                    >
-                        <svg
-                            width="16"
-                            height="16"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                        >
-                            <circle cx="11" cy="11" r="8" />
-                            <path d="m21 21-4.35-4.35" />
-                        </svg>
-                        <span>搜索</span>
-                    </button>
                 </div>
                 <!-- 发送 / 停止按钮 -->
                 <button
@@ -362,12 +340,6 @@ function removeImage(index: number) {
     background: var(--surface-2);
     color: var(--text-secondary);
 }
-.tool-btn.search-toggle.active {
-    background: var(--accent-light);
-    color: var(--accent);
-    border: 1px solid rgba(224, 149, 74, 0.2);
-}
-
 .send-btn {
     width: 34px;
     height: 34px;

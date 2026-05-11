@@ -146,19 +146,25 @@ class McpManager:
 
 def _lc_tool_to_openai_definition(lc_tool: Any) -> dict:
     """将 LangChain Tool 转换为 OpenAI Function Calling 格式"""
-    # LangChain MCP Tool 已经有 args_schema（Pydantic model）
+    # LangChain MCP Tool 在不同版本下可能返回：
+    # - Pydantic model class（有 model_json_schema）
+    # - 直接是 dict schema
+    # - args / tool_call_schema 这类已展开的 schema
     try:
-        schema = lc_tool.args_schema.model_json_schema() if lc_tool.args_schema else {}
+        schema = _extract_tool_schema(lc_tool)
         # 清理 Pydantic 特有字段
         schema.pop("title", None)
         properties = schema.get("properties", {})
         for prop in properties.values():
-            prop.pop("title", None)
+            if isinstance(prop, dict):
+                prop.pop("title", None)
         parameters = {
-            "type": "object",
+            "type": schema.get("type", "object"),
             "properties": properties,
             "required": schema.get("required", []),
         }
+        if "additionalProperties" in schema:
+            parameters["additionalProperties"] = schema["additionalProperties"]
     except Exception:
         parameters = {"type": "object", "properties": {}}
 
@@ -170,6 +176,30 @@ def _lc_tool_to_openai_definition(lc_tool: Any) -> dict:
             "parameters": parameters,
         },
     }
+
+
+def _extract_tool_schema(lc_tool: Any) -> dict:
+    args_schema = getattr(lc_tool, "args_schema", None)
+    if isinstance(args_schema, dict):
+        return dict(args_schema)
+    if args_schema and hasattr(args_schema, "model_json_schema"):
+        return args_schema.model_json_schema()
+
+    tool_call_schema = getattr(lc_tool, "tool_call_schema", None)
+    if isinstance(tool_call_schema, dict):
+        return dict(tool_call_schema)
+    if tool_call_schema and hasattr(tool_call_schema, "model_json_schema"):
+        return tool_call_schema.model_json_schema()
+
+    args = getattr(lc_tool, "args", None)
+    if isinstance(args, dict) and args:
+        return {
+            "type": "object",
+            "properties": dict(args),
+            "required": [],
+        }
+
+    return {}
 
 
 # ---------- 全局单例 ----------

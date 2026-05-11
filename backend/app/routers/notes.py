@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 from app.deps import get_current_user
 from app.models.schemas import NoteCreate, NoteSave, NoteFolderCreate, AiRefineRequest
 from app.services import note as note_service
-from app.services.azure_openai import get_chat_client
+from app.services.llm_factory import get_chat_client
 from app.services import auth as auth_service
 
 router = APIRouter(tags=["notes"])

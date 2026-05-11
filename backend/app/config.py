@@ -150,8 +150,8 @@ def get_settings() -> Settings:
 
 
 def reload_runtime_clients() -> None:
-    from app.services import azure_openai as ao
+    from app.services import llm_factory as llm
     from app.services import memory as mem
 
-    ao.reset_chat_clients()
+    llm.reset_chat_clients()
     mem.reset_memory_clients()
